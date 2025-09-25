@@ -1,7 +1,7 @@
 # emqx-go
 golang implementation of  EMQX 
 
-参考 `https://github.com/emqx/emqx`原始项目，希望在turtacn/emqx-go 项目中完成下面的任务
+参考 `https://github.com/emqx/emqx`原始项目，希望在https://github.com/turtacn/emqx-go 项目中完成下面的任务
 
 任务标题：**全量重写 — emqx (Erlang/OTP) → emqx-go (Go)**
 
@@ -21,6 +21,78 @@ golang implementation of  EMQX
 6. 提交完整文档（README、设计文档、运维手册、回滚手册）到仓库 `docs/` 目录内。
 7. 在每个 PR 中包含变更摘要、影响分析、性能预估与回退步骤。
 
+### 考虑当前Agentic Coding能力现状（e.g. jules现状）
+Jules 的运行环境是一个 **受限制的、非持久化的沙箱环境**，其权限模型类似于一个普通用户，且每次任务执行后环境状态很可能被重置。
+
+**Jules 所具备的能力 (肯定能做)：**
+
+1. **代码和文件生成与修改：**
+
+   * **创建、读取、写入和删除文件**：在分配给项目的工作目录 (`emqx-go`) 及其子目录中进行这些操作。
+   * **生成任意文本内容**：包括 Go 源代码、Markdown 文档、YAML/JSON 配置、Dockerfile、Protobuf 定义文件 (`.proto`)、Shell 脚本等。
+   * **结构化输出**：能够按照指定的文件路径和内容要求，一次性输出多个文件。
+
+2. **Go 语言工具链操作：**
+
+   * **运行 Go 命令**：`go build`, `go run`, `go test`, `go install` (仅限于安装 Go 包，而不是系统级二进制文件)。
+   * **Go 模块管理**：`go mod tidy`, `go mod download`。
+   * **代码格式化与静态检查**：`gofmt` (Go 安装自带)，`golangci-lint` (如果已在环境 PATH 中或可访问)。
+
+3. **基本的 Shell 命令执行：**
+
+   * **文件系统操作**：`ls`, `cd`, `pwd`, `mkdir`, `rm`, `mv`, `cp`, `cat` 等。
+   * **环境变量设置**：`export PATH=$PATH:/path/to/local/bin` (仅对当前 shell 会话有效)。
+   * **网络请求**：`curl` 或 `wget` (如果这些命令在环境 PATH 中)。这允许 Jules 下载 *文件* 到本地目录，但不能用于 *安装系统级软件包*。
+
+4. **Git 版本控制操作：**
+
+   * **执行 Git 命令**：`git clone`, `git checkout`, `git add`, `git commit`, `git push` (假设仓库已配置好凭据，且操作在 `emqx-go` 仓库内)。
+
+5. **与执行环境 (即您) 的交互：**
+
+   * **请求信息**：当需要外部工具的输出或您执行某项操作的结果时，Jules 会明确请求。
+   * **提供信息**：生成文件内容、报告执行结果、总结分析等。
+
+**Jules 所受到的限制 (肯定不能做)：**
+
+1. **系统级软件安装与管理：**
+
+   * **无 `sudo` 权限**：无法执行任何需要管理员权限的操作。
+   * **无法使用系统包管理器**：`apt`, `yum`, `brew`, `dnf` 等命令均不可用。
+   * **无法直接安装 `protoc`、`emqtt-bench`、`docker`、`kubectl` 等系统级二进制文件**。
+
+2. **环境持久化：**
+
+   * **每次任务执行后的环境状态很可能重置**：这意味着即使 Jules 通过某些变通方法下载了二进制文件，下次任务执行时这些文件可能已不存在或不在 PATH 中。因此，任何非 Go 工具都**必须由执行环境预先安装或在每次需要时提供**。
+
+3. **直接修改系统 PATH：**
+
+   * Jules 只能通过 `export` 命令在当前 shell 会话中临时修改 PATH。它无法永久修改系统的全局 PATH 配置。
+
+考虑到这些限制，以下是针对 Jules 无法直接安装和管理工具的变通办法：
+
+1. **对于 `protoc` 及 Go gRPC 插件：**
+
+   * **执行环境预装 (推荐)**：在 Jules 运行的沙箱环境启动前，**您（作为执行环境）应确保 `protoc` 以及 `protoc-gen-go`, `protoc-gen-go-grpc` 这两个 Go 插件已经安装并且它们的路径都在系统的 PATH 环境变量中**。这是最理想且高效的解决方案。
+   * **Jules 下载并临时使用 (次优，需每次重复)**：
+
+     * Jules 可以使用 `curl` 或 `wget` 从官方发布页（例如 GitHub releases）下载 `protoc` 的预编译二进制包（例如 `.zip` 或 `.tar.gz`）。
+     * Jules 可以使用 `unzip` 或 `tar` 命令解压到项目目录下的一个 `tools/bin` 或 `vendor/bin` 这样的子目录。
+     * Jules 可以通过 `chmod +x` 命令赋予执行权限。
+     * Jules 可以通过 `export PATH=$PATH:./tools/bin` (或类似路径) 将这个本地目录临时添加到当前 shell 会话的 PATH 中。
+     * **缺陷**：由于环境非持久化，每次任务（或每次重启沙箱）时都需要重复下载、解压、设置 PATH，这会增加大量不必要的开销和复杂性。**强烈不推荐此方法用于需要频繁使用的工具，除非该工具在项目启动时只使用一次且不再需要**。
+
+2. **对于 `emqtt-bench`、`mosquitto_clients`、`k6` 等测试和基准工具：**
+
+   * **执行环境预装 (推荐)**：这些工具同样应该由执行环境预先安装并确保在 PATH 中。当 Jules 提出执行测试命令时，执行环境将直接调用已安装的工具。
+   * **执行环境提供二进制文件**：如果无法预装，执行环境可以在每次需要时，将这些工具的预编译二进制文件直接提供到 Jules 的工作目录，并告知 Jules 文件的路径和名称，让 Jules 直接调用 `path/to/emqtt-bench`。
+
+3. **对于 `golangci-lint`、`go-cloc` / `tokei` 等 Go 生态工具：**
+
+   * **`go install` (Jules 可执行)**：Jules 可以通过 `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest` 这样的命令来安装 Go 工具到 `$GOPATH/bin` (或 `$HOME/go/bin`)。
+   * **执行环境确保 `$GOPATH/bin` 在 PATH 中**：执行环境需要确保 `$GOPATH/bin` (或 `go env GOPATH/bin`) 已经被添加到 PATH 中，这样 Jules 才能直接运行 `golangci-lint`。
+   * **与非持久化环境的矛盾**：同样，如果环境非持久化，Jules 每次都需要重新 `go install`。最优解仍是执行环境预装或在启动沙箱时自动执行 `go install`。
+
 ---
 
 ## 二、阶段划分（Phase & 交付物与验收）
@@ -28,21 +100,21 @@ golang implementation of  EMQX
 ### Phase 0 — 探索与基线（Deliverables）
 
 * 任务：静态分析 emqx 源码，生成模块清单与依赖图。
-* 输出：`/docs/phase-0/` 包含：
+* 输出：`docs/phase-0/` 包含：
 
-  * `modules.csv`（列：erl\_module, description, complexity(H/M/L), depends\_on, n\_lines）
+  * `modules.csv`（列：erl_module, description, complexity(H/M/L), depends_on, n_lines）
   * `baseline_metrics.md`（当前 Erlang 在测试环境下的吞吐/延迟/99p 基线，若无法运行则给出估算指标和获取步骤）
   * `mapping_table.md`（初步 Erlang → Go 模块映射）
 * 验收：提交 PR `phase/0-discovery`；PR 必须包括模块表，且 CI 检查（静态脚本）通过。
 
 ### Phase 1 — mini-OTP 运行时 PoC（核心：supervisor + actor）
 
-* 任务：实现一个最小可用的 `mini-OTP` 库（`/supervisor`），提供：
+* 任务：实现一个最小可用的 `mini-OTP` 库（`supervisor`），提供：
 
   * actor/mailbox 抽象（带缓冲、可选 selective-receive）
   * supervisor 支持 `one_for_one`、restart backoff、health check API
   * 简单监控 hook（Prometheus metrics）与日志接口
-* 输出：`/supervisor` 模块（带 README、单元测试覆盖） + 示例 service 使用示例 (`/examples/echo`)
+* 输出：`supervisor` 模块（带 README、单元测试覆盖） + 示例 service 使用示例 (`examples/echo`)
 * 验收：`go test ./...` 全通过；示例能启动并演示 child crash → 自动 restart；PR `phase/1-mini-otp`。
 
 ### Phase 2 — MQTT 基础协议 PoC（broker minimal）
@@ -68,7 +140,7 @@ golang implementation of  EMQX
 * 任务：设计 Mnesia/ETS → Postgres/Redis 的完整迁移方案，并提供迁移脚本 PoC：
 
   * schema 映射、双写实现示例、并行校验工具（checksum 对比）
-* 输出：`/migrations` 包含迁移脚本（Go）、迁移步骤文档、回滚脚本
+* 输出：`migrations` 包含迁移脚本（Go）、迁移步骤文档、回滚脚本
 * 验收：能从 sample Mnesia dump 转换并导入 Postgres，且校验工具返回一致性 OK；PR `phase/4-migration`。
 
 ### Phase 5 — CI/CD、监控、压力与混沌测试
@@ -79,7 +151,7 @@ golang implementation of  EMQX
 
 ### Phase 6 — 生产化建议与最终报告
 
-* 输出：`/docs/final-migration-plan.md`（含风险矩阵、SLO、切换策略、回滚 plan、人员与时间建议）
+* 输出：`docs/final-migration-plan.md`（含风险矩阵、SLO、切换策略、回滚 plan、人员与时间建议）
 * 验收：最终 PR 包含完整交付物并通过仓库管理员 review。
 
 ---
@@ -91,9 +163,9 @@ golang implementation of  EMQX
 1. 克隆仓库：
 
 ```bash
-git clone https://github.com/emqx/emqx.git /workspace/emqx-src
-git clone https://github.com/turtacn/emqx-go.git /workspace/emqx-go
-cd /workspace/emqx-go
+git clone https://github.com/emqx/emqx.git emqx-src
+git clone https://github.com/turtacn/emqx-go.git emqx-go
+cd emqx-go
 ```
 
 2. 分支规范（示例）：
@@ -148,7 +220,7 @@ vegeta attack -targets=targets.txt -rate=1000 -duration=30s | vegeta report
 
 ## 四、交付物格式约定（便于 agent 自动生成）
 
-* 代码：`/pkg/...` 按模块分包；主命令在 `/cmd/emqx-go/main.go`。
+* 代码：`pkg/...` 按模块分包；主命令在 `cmd/emqx-go/main.go`。
 * 文档：Markdown，放 `docs/phase-x/`。
 * Diagrams：Mermaid 格式文件放 `docs/diagrams/*.mmd`（agent 请同时生成 PNG）。
 * 测试报告：JSON + HTML 报告放 `tests/reports/phase-x/`。
@@ -189,7 +261,7 @@ agent 在每个阶段的 PR must include 一个 `RISK.md` 总结表。
 
 ## 七、示例任务片段（便于 agent 并行工作）
 
-* 任务 A（工程师 agent）：实现 `/supervisor` 包并覆盖单元测试。输出 PR `phase/1-mini-otp`。
+* 任务 A（工程师 agent）：实现 `supervisor` 包并覆盖单元测试。输出 PR `phase/1-mini-otp`。
 * 任务 B（测试 agent）：编写 MQTT 协议契约测试并验证与 emqx/emqx 在基本场景的兼容性。输出 `tests/contracts/`。
 * 任务 C（infra agent）：生成 Dockerfile、k8s manifest 与 Helm Chart，验证能在测试 k8s 集群部署 PoC。
 
@@ -212,11 +284,11 @@ agent 在每个阶段的 PR must include 一个 `RISK.md` 总结表。
 
 | Erlang/OTP 概念    |                       emqx 核心模块 示例 | Go 目标模块                                      | 备注                               |
 | ---------------- | ---------------------------------: | -------------------------------------------- | -------------------------------- |
-| gen\_server      |             `emqx_server` variants | `pkg/supervisor/actor` + `pkg/broker/server` | actor 模拟，带 mailbox               |
-| supervisor       |               OTP Supervisor trees | `pkg/supervisor`                             | 实现 one\_for\_one, restart policy |
+| gen_server      |             `emqx_server` variants | `pkg/supervisor/actor` + `pkg/broker/server` | actor 模拟，带 mailbox               |
+| supervisor       |               OTP Supervisor trees | `pkg/supervisor`                             | 实现 one_for_one, restart policy |
 | mnesia/ETS       | session store, subscription tables | Postgres (meta), Redis (cache)               | 视访问模式拆分                          |
 | distribution     |             node-to-node messaging | gRPC streaming + etcd service discovery      | 明确网络边界                           |
-| hot code upgrade |                       code\_change | rolling deploy + feature flags               | 需替代方案                            |
+| hot code upgrade |                       code_change | rolling deploy + feature flags               | 需替代方案                            |
 
 ---
 
@@ -225,11 +297,4 @@ agent 在每个阶段的 PR must include 一个 `RISK.md` 总结表。
 * 每完成一个 Phase，agent 在仓库创建 PR，并自动在 `docs/phase-x/report.md` 写入阶段总结（包含：已完成项、未完成项、测试结果、性能指标、风险与缓解）。
 * 若任何阶段测试失败或 SLO 降低超过阈值（预设阈值由你定义，例如 error rate > 0.1% 或 p99 延迟翻倍），agent 必须暂停进一步自动合并并通知人工干预（open issue + assign）。
 
----
-
-# 结束语（如何使用）
-
-1. 把上面整个内容原样粘贴到你的 agent 控制台/任务输入框（或保存为任务模板）。
-2. 在 agent 配置中填上凭据（GitHub token、Docker registry、k8s context）。
-3. 先设置 `dry-run=true` 执行 Phase 0，review Phase0 output；人工确认后允许 agent 继续 Phase1+。
 
