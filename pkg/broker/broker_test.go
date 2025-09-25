@@ -1,95 +1,93 @@
 package broker
 
 import (
+	"context"
+	"fmt"
+	"log"
+	"net"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/asynkron/protoactor-go/actor"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// --- Test Subscriber Actor ---
-
-// TestSubscriber is an actor that acts as a client in tests.
-// It can receive and store forwarded messages.
-type TestSubscriber struct {
-	ReceivedMessages []*ForwardedPublish
+// Helper to get a free port for the listener
+func getFreePort() (int, error) {
+	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
+	if err != nil {
+		return 0, err
+	}
+	l, err := net.ListenTCP("tcp", addr)
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-func (s *TestSubscriber) Receive(context actor.Context) {
-	switch msg := context.Message().(type) {
-	case *ForwardedPublish:
-		s.ReceivedMessages = append(s.ReceivedMessages, msg)
+func TestBroker_MqttContract_PubSub(t *testing.T) {
+	// --- Setup ---
+	port, err := getFreePort()
+	require.NoError(t, err)
+	addr := fmt.Sprintf("tcp://localhost:%d", port)
+
+	broker := New()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		err := broker.StartServer(ctx, fmt.Sprintf(":%d", port))
+		if err != nil && !strings.Contains(err.Error(), "use of closed network connection") {
+			log.Printf("Broker server exited with error: %v", err)
+		}
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	// --- Subscriber Client ---
+	msgCh := make(chan mqtt.Message)
+	subOpts := mqtt.NewClientOptions().AddBroker(addr).SetClientID("subscriber")
+	subOpts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
+		msgCh <- msg
+	})
+	subClient := mqtt.NewClient(subOpts)
+	subToken := subClient.Connect()
+	subToken.Wait()
+	require.NoError(t, subToken.Error(), "Subscriber should connect")
+
+	subSubToken := subClient.Subscribe("test/topic", 0, nil)
+	subSubToken.Wait()
+	require.NoError(t, subSubToken.Error(), "Subscriber should subscribe")
+	log.Println("Subscriber connected and subscribed.")
+
+	// --- Publisher Client ---
+	pubOpts := mqtt.NewClientOptions().AddBroker(addr).SetClientID("publisher")
+	pubClient := mqtt.NewClient(pubOpts)
+	pubToken := pubClient.Connect()
+	pubToken.Wait()
+	require.NoError(t, pubToken.Error(), "Publisher should connect")
+	log.Println("Publisher connected.")
+
+	// --- Publish Message ---
+	pubMsg := "hello from publisher"
+	pubPubToken := pubClient.Publish("test/topic", 0, false, pubMsg)
+	pubPubToken.Wait()
+	require.NoError(t, pubPubToken.Error(), "Publisher should publish")
+	log.Println("Publisher sent message.")
+
+	// --- Verification ---
+	select {
+	case receivedMsg := <-msgCh:
+		assert.Equal(t, "test/topic", receivedMsg.Topic())
+		assert.Equal(t, pubMsg, string(receivedMsg.Payload()))
+		log.Println("Subscriber received message successfully.")
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for message from publisher")
 	}
-}
 
-func NewTestSubscriber() actor.Actor {
-	return &TestSubscriber{
-		ReceivedMessages: make([]*ForwardedPublish, 0),
-	}
-}
-
-// --- Broker Tests ---
-
-func TestBroker_SubscribeAndPublish(t *testing.T) {
-	system := actor.NewActorSystem()
-
-	// Spawn the broker actor
-	brokerProps := New()
-	brokerPID := system.Root.Spawn(brokerProps)
-
-	// Spawn a subscriber actor
-	subscriberActor := &TestSubscriber{ReceivedMessages: make([]*ForwardedPublish, 0)}
-	subscriberProps := actor.PropsFromProducer(func() actor.Actor { return subscriberActor })
-	subscriberPID := system.Root.Spawn(subscriberProps)
-
-	// --- Subscribe ---
-	subscribeMsg := &Subscribe{
-		Topic:  "test/topic",
-		Sender: subscriberPID,
-	}
-	system.Root.Send(brokerPID, subscribeMsg)
-
-	// Allow some time for the message to be processed
-	time.Sleep(50 * time.Millisecond)
-
-	// --- Publish ---
-	publishMsg := &Publish{
-		Topic:   "test/topic",
-		Payload: []byte("hello world"),
-	}
-	system.Root.Send(brokerPID, publishMsg)
-
-	// Allow some time for the message to be forwarded
-	time.Sleep(50 * time.Millisecond)
-
-	// --- Assert ---
-	assert.Len(t, subscriberActor.ReceivedMessages, 1, "Subscriber should have received one message")
-	if len(subscriberActor.ReceivedMessages) > 0 {
-		received := subscriberActor.ReceivedMessages[0]
-		assert.Equal(t, "test/topic", received.Topic)
-		assert.Equal(t, []byte("hello world"), received.Payload)
-	}
-}
-
-func TestBroker_Unsubscribe(t *testing.T) {
-	system := actor.NewActorSystem()
-	brokerPID := system.Root.Spawn(New())
-	subscriberActor := &TestSubscriber{ReceivedMessages: make([]*ForwardedPublish, 0)}
-	subscriberPID := system.Root.Spawn(actor.PropsFromProducer(func() actor.Actor { return subscriberActor }))
-
-	// Subscribe
-	system.Root.Send(brokerPID, &Subscribe{Topic: "test/topic", Sender: subscriberPID})
-	time.Sleep(50 * time.Millisecond)
-
-	// Unsubscribe
-	system.Root.Send(brokerPID, &Unsubscribe{Topic: "test/topic", Sender: subscriberPID})
-	time.Sleep(50 * time.Millisecond)
-
-	// Publish
-	system.Root.Send(brokerPID, &Publish{Topic: "test/topic", Payload: []byte("you should not see this")})
-	time.Sleep(50 * time.Millisecond)
-
-	// Assert
-	assert.Empty(t, subscriberActor.ReceivedMessages, "Subscriber should not receive messages after unsubscribing")
+	// --- Cleanup ---
+	subClient.Disconnect(250)
+	pubClient.Disconnect(250)
 }

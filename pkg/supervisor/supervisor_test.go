@@ -43,13 +43,15 @@ func TestSupervisor_StartAndShutdown(t *testing.T) {
 		Mailbox: actor.NewMailbox(1),
 	}
 
-	go func() {
-		err := sup.Start(ctx, []Spec{spec})
-		assert.NoError(t, err, "Supervisor should shut down cleanly")
-	}()
+	err := sup.Start(ctx, []Spec{spec})
+	assert.NoError(t, err)
 
 	// Wait a bit for the actor to start
 	time.Sleep(100 * time.Millisecond)
+
+	// In this test, we now need a way to wait for the supervisor to finish.
+	// We'll wait for the child actor's goroutine to complete.
+	// Since the supervisor is no longer blocking, we just cancel and wait.
 
 	// Cancel the supervisor's context
 	cancel()
@@ -79,7 +81,8 @@ func TestSupervisor_OneForOne_PermanentRestart(t *testing.T) {
 		Mailbox: actor.NewMailbox(1),
 	}
 
-	go sup.Start(ctx, []Spec{spec})
+	err := sup.Start(ctx, []Spec{spec})
+	assert.NoError(t, err)
 
 	// Wait for the supervisor to do its work
 	<-ctx.Done()
@@ -117,7 +120,8 @@ func TestSupervisor_OneForOne_PanicRestart(t *testing.T) {
 		Mailbox: actor.NewMailbox(1),
 	}
 
-	go sup.Start(ctx, []Spec{spec})
+	err := sup.Start(ctx, []Spec{spec})
+	assert.NoError(t, err)
 
 	// Wait for the supervisor to restart the actor multiple times.
 	<-ctx.Done()
@@ -150,7 +154,8 @@ func TestSupervisor_OneForOne_NoRestart(t *testing.T) {
 		Mailbox: actor.NewMailbox(1),
 	}
 
-	go sup.Start(ctx, []Spec{spec})
+	err := sup.Start(ctx, []Spec{spec})
+	assert.NoError(t, err)
 
 	<-ctx.Done()
 
@@ -186,7 +191,8 @@ func TestSupervisor_Strategies(t *testing.T) {
 			Restart: RestartTransient,
 			Mailbox: actor.NewMailbox(1),
 		}
-		go sup.Start(ctx, []Spec{spec})
+		err := sup.Start(ctx, []Spec{spec})
+		assert.NoError(t, err)
 		<-ctx.Done()
 
 		mu.Lock()
@@ -213,7 +219,8 @@ func TestSupervisor_Strategies(t *testing.T) {
 			Restart: RestartTransient,
 			Mailbox: actor.NewMailbox(1),
 		}
-		go sup.Start(ctx, []Spec{spec})
+		err := sup.Start(ctx, []Spec{spec})
+		assert.NoError(t, err)
 		<-ctx.Done()
 
 		mu.Lock()

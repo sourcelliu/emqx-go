@@ -34,6 +34,7 @@ type Spec struct {
 // Supervisor defines the interface for a supervisor process.
 type Supervisor interface {
 	Start(ctx context.Context, specs []Spec) error
+	StartChild(ctx context.Context, spec Spec)
 }
 
 // OneForOneSupervisor implements a one-for-one supervision strategy.
@@ -45,25 +46,25 @@ func NewOneForOneSupervisor() *OneForOneSupervisor {
 	return &OneForOneSupervisor{}
 }
 
-// Start begins the supervisor's monitoring loop.
+// Start launches the initial set of supervised children. This method is non-blocking.
 func (s *OneForOneSupervisor) Start(ctx context.Context, specs []Spec) error {
 	if len(specs) == 0 {
 		return fmt.Errorf("no child specs provided")
 	}
-
 	for _, spec := range specs {
-		// Create a cancellable context for each child
-		childCtx, cancel := context.WithCancel(ctx)
-		go s.monitorChild(childCtx, cancel, spec)
+		s.StartChild(ctx, spec)
 	}
-
-	// Keep the supervisor running until its own context is cancelled.
-	<-ctx.Done()
-	log.Println("Supervisor is shutting down.")
 	return nil
 }
 
-// monitorChild starts and monitors a single child actor. It runs in its own goroutine.
+// StartChild launches and monitors a single new child actor in its own goroutine.
+func (s *OneForOneSupervisor) StartChild(ctx context.Context, spec Spec) {
+	// Each child gets its own cancellable context, derived from the parent.
+	childCtx, cancel := context.WithCancel(ctx)
+	go s.monitorChild(childCtx, cancel, spec)
+}
+
+// monitorChild is the internal loop that monitors a single child actor.
 func (s *OneForOneSupervisor) monitorChild(ctx context.Context, cancel context.CancelFunc, spec Spec) {
 	defer cancel() // Ensure the context for this child is eventually cancelled.
 

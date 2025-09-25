@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: emqx-go-poc
+  labels:
+    app: emqx-go
+spec:
+  containers:
+  - name: emqx-go
+    # In a real scenario, this would point to a tagged image in a registry
+    # e.g., myregistry.com/emqx-go:phase-2
+    image: emqx-go:poc
+    # imagePullPolicy: IfNotPresent is useful for local development with minikube,
+    # as it will use a locally built image if the tag matches.
+    imagePullPolicy: IfNotPresent
+    ports:
+    - containerPort: 1883
+      name: mqtt
+      protocol: TCP
