@@ -1,7 +1,7 @@
 # emqx-go
-golang implementation of  EMQX 
+golang implementation of EMQX 
 
-参考 `https://github.com/emqx/emqx`原始项目，希望在https://github.com/turtacn/emqx-go 项目中完成下面的任务
+参考 https://github.com/emqx/emqx 原始项目，希望在`https://github.com/turtacn/emqx-go`项目中完成下面的任务
 
 任务标题：**全量重写 — emqx (Erlang/OTP) → emqx-go (Go)**
 
