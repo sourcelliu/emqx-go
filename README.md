@@ -163,9 +163,9 @@ Jules 的运行环境是一个 **受限制的、非持久化的沙箱环境**，
 1. 克隆仓库：
 
 ```bash
-git clone https://github.com/emqx/emqx.git emqx-src
-git clone https://github.com/turtacn/emqx-go.git emqx-go
-cd emqx-go
+git clone https://github.com/turtacn/emqx-go.git emqx-go 
+cd emqx-go 
+// emqx-go/emqx-src 目录为 https://github.com/emqx/emqx.git master 分支完整代码
 ```
 
 2. 分支规范（示例）：
