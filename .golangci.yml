@@ -1,0 +1,29 @@
+run:
+  timeout: 5m
+  skip-dirs:
+    - emqx-src
+
+linters-settings:
+  govet:
+    check-shadowing: true
+  gofmt:
+    simplify: true
+  goimports:
+    local-prefixes: github.com/turtacn/emqx-go
+
+linters:
+  disable-all: true
+  enable:
+    - gofmt
+    - govet
+    - errcheck
+    - staticcheck
+    - unused
+    - goimports
+    - ineffassign
+    - typecheck
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
