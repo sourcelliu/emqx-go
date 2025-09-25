@@ -1,0 +1,57 @@
+./semver.sh 5.2.0.1
+>>>= 1
+
+./semver.sh 5.1.0
+>>>
+{"major": 5, "minor": 1, "patch": 0, "build": ""}
+>>>= 0
+
+./semver.sh 5.1.0-build.3
+>>>
+{"major": 5, "minor": 1, "patch": 0, "build": "build.3"}
+>>>= 0
+
+./semver.sh 5.1.0-build.3 --major
+>>>
+5
+>>>= 0
+
+./semver.sh 5.1.0-build.3 --minor
+>>>
+1
+>>>= 0
+
+./semver.sh 5.1.0-build.3 --patch
+>>>
+0
+>>>= 0
+
+./semver.sh 5.1.0-build.3 --build
+>>>
+build.3
+>>>= 0
+
+./semver.sh 5.9.0-alpha.1-gde76a339 --major
+>>>
+5
+>>>= 0
+
+./semver.sh 5.9.0-alpha.1-gde76a339 --minor
+>>>
+9
+>>>= 0
+
+./semver.sh 5.9.0-alpha.1-gde76a339 --patch
+>>>
+0
+>>>= 0
+
+./semver.sh 5.9.0-alpha.1-gde76a339
+>>>
+{"major": 5, "minor": 9, "patch": 0, "build": "alpha.1"}
+>>>= 0
+
+./semver.sh 5.9.0-gde76a339
+>>>
+{"major": 5, "minor": 9, "patch": 0, "build": ""}
+>>>= 0

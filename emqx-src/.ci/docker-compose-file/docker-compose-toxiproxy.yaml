@@ -1,0 +1,21 @@
+services:
+  toxiproxy:
+    container_name: toxiproxy
+    image: ghcr.io/shopify/toxiproxy:2.5.0
+    restart: always
+    networks:
+      emqx_bridge:
+        aliases:
+          - toxiproxy
+          - toxiproxy.emqx.net
+    volumes:
+      - "./toxiproxy.json:/config/toxiproxy.json"
+    # toxiproxy do not export ports anymore
+    # try connect toxiproxy directly by container name/container ip
+    # ```
+    # docker container inspect toxiproxy \
+    #   -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+    # ```
+    command:
+      - "-host=0.0.0.0"
+      - "-config=/config/toxiproxy.json"

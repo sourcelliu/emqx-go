@@ -1,0 +1,43 @@
+---
+
+name: Keep master green
+
+on:
+  schedule:
+    # run hourly
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rerun-failed-jobs:
+    if: github.repository_owner == 'emqx'
+    runs-on: ubuntu-latest
+    permissions:
+      checks: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        ref:
+          - master
+          - release-58
+          - release-59
+          - release-510
+          - release-60
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: run script
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: |
+          for id in $(gh run list --branch ${{ matrix.ref }} --workflow "Push Entrypoint" --commit $(git rev-parse HEAD) --status failure --json databaseId,attempt --jq '.[] | select(.attempt < 3) | .databaseId'); do
+            gh run rerun "$id" --failed
+          done

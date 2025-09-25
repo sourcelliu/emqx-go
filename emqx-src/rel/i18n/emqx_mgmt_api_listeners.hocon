@@ -1,0 +1,117 @@
+emqx_mgmt_api_listeners {
+
+list_node_live_statuses.desc:
+"""List all running node's listeners live status. group by listener type"""
+list_node_live_statuses.label:
+"""List listeners live status"""
+
+list_listeners.desc:
+"""List all running node's listeners for the specified type."""
+list_listeners.label:
+"""List listeners per type"""
+
+listener_type.desc:
+"""Listener type"""
+listener_type.label:
+"""Listener type"""
+
+create_on_all_nodes.desc:
+"""Create the specified listener on all nodes."""
+create_on_all_nodes.label:
+"""Create listener"""
+
+list_by_id.desc:
+"""List all running node's listeners for the specified id."""
+list_by_id.label:
+"""List listeners per ID"""
+
+update_lisener.desc:
+"""Update the specified listener on all nodes."""
+update_lisener.label:
+"""Update listener"""
+
+delete_on_all_nodes.desc:
+"""Delete the specified listener on all nodes."""
+delete_on_all_nodes.label:
+"""Delete listener"""
+
+start_on_all_nodes.desc:
+"""Start the listener on all nodes."""
+start_on_all_nodes.label:
+"""Start listener"""
+
+stop_on_all_nodes.desc:
+"""Stop the listener on all nodes."""
+stop_on_all_nodes.label:
+"""Stop listener"""
+
+restart_on_all_nodes.desc:
+"""Restart listeners on all nodes."""
+restart_on_all_nodes.label:
+"""Restart listener"""
+
+max_connections {
+    desc: "Maximum number of connections configured for a listener."
+    label: "Max Connections"
+}
+
+current_connections {
+    desc: "Current number of connections."
+    label: "Current Connections"
+}
+
+node_name {
+    desc: "Node Name",
+    label: "Node Name"
+}
+
+listener_type {
+    desc: "Type of the listener (tcp, ssl, ws, wss, quic)"
+    label: "Listener Type"
+}
+
+listener_id {
+    desc: "The identifier of the listener, in the format of {type}:{name}, e.g. 'tcp:default', 'ssl:default', etc."
+    label: "Listener ID"
+}
+
+listener_enable {
+    desc: "Whether the listener is enabled."
+    label: "Enable"
+}
+
+listener_ids {
+    desc: "List of listener identifiers."
+    label: "Listener IDs"
+}
+listener_id_count {
+    desc: "Number of nodes where this listener is running."
+    label: "Node Count"
+}
+
+listener_name {
+    desc: "Name of the listener."
+    label: "Listener Name"
+}
+
+listener_bind_addr {
+    desc: "The IP address and port that the listener binds to."
+    label: "Bind Address"
+}
+
+listener_acceptors {
+    desc: "Number of acceptors for a listener."
+    label: "Acceptors"
+}
+
+listener_running_status {
+    desc: "Running status of the listener. Can be 'true', 'false' or 'inconsistent' when nodes have different running status."
+    label: "Running Status"
+}
+
+listener_status {
+    desc: "Status of the listener. 'true' for running, otherwise 'false'."
+    label: "Listener Status"
+}
+
+}
