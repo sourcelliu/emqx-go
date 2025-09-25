@@ -7,7 +7,7 @@ import (
 	"log"
 
 	"github.com/mochi-mqtt/server/v2/packets"
-	"turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
 // Publish is the message type for publishing a message to a client.

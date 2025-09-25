@@ -7,7 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"turtacn/emqx-go/pkg/broker"
+	"github.com/turtacn/emqx-go/pkg/broker"
 )
 
 func main() {

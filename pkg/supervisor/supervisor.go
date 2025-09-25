@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
 // RestartStrategy defines when a supervisor should restart a child actor.

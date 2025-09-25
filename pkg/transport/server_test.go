@@ -6,9 +6,9 @@ import (
 	"net"
 	"testing"
 	"time"
-	"turtacn/emqx-go/pkg/broker"
-	"turtacn/emqx-go/pkg/protocol/mqtt"
-	"turtacn/emqx-go/pkg/supervisor"
+	"github.com/turtacn/emqx-go/pkg/broker"
+	"github.com/turtacn/emqx-go/pkg/protocol/mqtt"
+	"github.com/turtacn/emqx-go/pkg/supervisor"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
