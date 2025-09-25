@@ -5,9 +5,6 @@
 package clusterpb
 
 import (
-	context "context"
-	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
-	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -21,9 +18,9 @@ type NodeInfo struct {
 	// ... (proto impl fields)
 }
 
-func (x *NodeInfo) Reset() { /* generated */ }
+func (x *NodeInfo) Reset()         { /* generated */ }
 func (x *NodeInfo) String() string { /* generated */ }
-func (*NodeInfo) ProtoMessage() {}
+func (*NodeInfo) ProtoMessage()    {}
 // getters...
 func (x *NodeInfo) GetNodeId() string { if x!=nil { return x.NodeId }; return "" }
 
