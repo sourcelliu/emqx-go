@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: emqx-go
+spec:
+  serviceName: "emqx-go-headless"
+  replicas: 3
+  selector:
+    matchLabels:
+      app: emqx-go
+  template:
+    metadata:
+      labels:
+        app: emqx-go
+    spec:
+      containers:
+      - name: emqx-go
+        image: emqx-go:cluster-poc # This would be a real image tag
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 1883
+          name: mqtt
+        - containerPort: 8081
+          name: grpc
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: HEADLESS_SERVICE_NAME
+          value: "emqx-go-headless"
+        - name: GRPC_PORT_NAME
+          value: "grpc"
+        # Readiness and Liveness probes would be critical here in a real deployment
+        # to ensure traffic is only sent to healthy nodes.
+        # readinessProbe:
+        #   tcpSocket:
+        #     port: 1883
+        #   initialDelaySeconds: 5
+        #   periodSeconds: 10
+        # livenessProbe:
+        #   tcpSocket:
+        #     port: 1883
+        #   initialDelaySeconds: 15
+        #   periodSeconds: 20
+      terminationGracePeriodSeconds: 30

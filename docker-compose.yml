@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  emqx-go-1:
+    build: .
+    container_name: emqx-go-1
+    hostname: emqx-go-1
+    environment:
+      - NODE_ID=emqx-go-1
+      # In a real scenario, we'd need a way to pass peer addresses.
+      # Docker Compose networks make this straightforward via DNS.
+      - PEER_ADDRESSES=emqx-go-2:8081
+    ports:
+      - "1883:1883" # MQTT
+      - "8081:8081" # gRPC for clustering
+
+  emqx-go-2:
+    build: .
+    container_name: emqx-go-2
+    hostname: emqx-go-2
+    environment:
+      - NODE_ID=emqx-go-2
+      - PEER_ADDRESSES=emqx-go-1:8081
+    ports:
+      - "1884:1883" # Expose on a different host port to avoid conflicts
+      - "8082:8081"

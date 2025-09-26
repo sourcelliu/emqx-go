@@ -1,0 +1,184 @@
+syntax = "proto3";
+
+package proto;
+option go_package = "github.com/turtacn/emqx-go/pkg/proto/cluster";
+
+// 节点基本信息
+message NodeInfo {
+  string node_id = 1;      // 节点唯一标识
+  string address = 2;      // 节点网络地址 (ip:port)
+  string version = 3;      // EMQX版本
+  int64 uptime = 4;        // 运行时间(秒)
+  int32 status = 5;        // 节点状态(1=运行中, 2=离线, 3=正在启动)
+  int64 last_seen = 6;     // 最后活跃时间戳
+}
+
+// 集群节点加入请求
+message JoinRequest {
+  NodeInfo node = 1;       // 加入的节点信息
+  string token = 2;        // 集群认证令牌
+  int64 timestamp = 3;     // 请求时间戳
+}
+
+// 集群节点加入响应
+message JoinResponse {
+  bool success = 1;
+  string message = 2;
+  repeated NodeInfo cluster_nodes = 3;  // 当前集群节点列表
+  string cluster_id = 4;                // 集群唯一标识
+}
+
+// 集群节点离开请求
+message LeaveRequest {
+  string node_id = 1;      // 要离开的节点ID
+  bool force = 2;          // 是否强制离开
+}
+
+// 集群节点离开响应
+message LeaveResponse {
+  bool success = 1;
+  string message = 2;
+  repeated NodeInfo remaining_nodes = 3;  // 剩余节点列表
+}
+
+// 节点状态同步请求
+message SyncNodeStatusRequest {
+  NodeInfo node = 1;
+  repeated NodeInfo known_nodes = 2;  // 已知节点状态
+}
+
+// 节点状态同步响应
+message SyncNodeStatusResponse {
+  bool success = 1;
+  string message = 2;
+  repeated NodeInfo all_nodes = 3;    // 全量节点状态
+}
+
+// 订阅关系信息
+message Subscription {
+  string client_id = 1;    // 客户端ID
+  string topic_filter = 2; // 主题过滤器
+  int32 qos = 3;           // QoS等级
+  bool no_local = 4;       // 是否不接收自己发布的消息
+  bool retain_as_published = 5; // 保留消息发布模式
+  int32 retain_handling = 6;    // 保留消息处理策略
+}
+
+// 订阅关系同步请求
+message SyncSubscriptionsRequest {
+  string node_id = 1;
+  repeated Subscription subscriptions = 2;  // 订阅列表
+  bool full_sync = 3;                       // 是否全量同步
+}
+
+// 订阅关系同步响应
+message SyncSubscriptionsResponse {
+  bool success = 1;
+  string message = 2;
+  int32 received_count = 3;  // 接收的订阅数量
+}
+
+// 消息发布转发
+message PublishForward {
+  string message_id = 1;     // 消息唯一标识
+  string topic = 2;          // 主题
+  bytes payload = 3;         // 消息体
+  int32 qos = 4;             // QoS等级
+  bool retain = 5;           // 是否保留消息
+  bool dup = 6;              // 是否重发消息
+  string from_node = 7;      // 来源节点ID
+  string from_client = 8;    // 来源客户端ID
+  int64 timestamp = 9;       // 消息时间戳
+  map<string, bytes> user_properties = 10;  // 用户属性
+}
+
+// 消息转发确认
+message ForwardAck {
+  string message_id = 1;
+  bool success = 2;
+  string message = 3;
+  string to_node = 4;
+}
+
+// 主题路由信息
+message Route {
+  string topic = 1;                // 主题
+  repeated string node_ids = 2;    // 负责该主题的节点ID列表
+  int64 update_time = 3;           // 最后更新时间
+}
+
+// 路由更新批量请求
+message BatchUpdateRoutesRequest {
+  repeated Route routes = 1;       // 路由列表
+  string op_type = 2;              // 操作类型("add", "delete", "update")
+  string from_node = 3;            // 发起节点ID
+}
+
+// 路由更新响应
+message BatchUpdateRoutesResponse {
+  bool success = 1;
+  string message = 2;
+  int32 updated_count = 3;         // 更新的路由数量
+}
+
+// 集群配置同步请求
+message SyncConfigRequest {
+  string node_id = 1;
+  string config_key = 2;           // 配置键(为空表示全量)
+  map<string, string> configs = 3; // 配置键值对
+}
+
+// 集群配置同步响应
+message SyncConfigResponse {
+  bool success = 1;
+  string message = 2;
+  map<string, string> configs = 3; // 完整配置(仅当请求为空时返回)
+}
+
+// 集群统计信息请求
+message ClusterStatsRequest {
+  string node_id = 1;              // 特定节点(为空表示所有节点)
+  repeated string metrics = 2;     // 要获取的指标(为空表示所有)
+}
+
+// 节点统计信息
+message NodeStats {
+  string node_id = 1;
+  map<string, int64> metrics = 2;  // 指标键值对
+  int64 timestamp = 3;
+}
+
+// 集群统计信息响应
+message ClusterStatsResponse {
+  bool success = 1;
+  string message = 2;
+  repeated NodeStats node_stats = 3;  // 节点统计信息列表
+  int64 timestamp = 4;
+}
+
+// 集群服务接口定义
+service ClusterService {
+  // 节点加入集群
+  rpc Join(JoinRequest) returns (JoinResponse);
+
+  // 节点离开集群
+  rpc Leave(LeaveRequest) returns (LeaveResponse);
+
+  // 同步节点状态
+  rpc SyncNodeStatus(SyncNodeStatusRequest) returns (SyncNodeStatusResponse);
+
+  // 同步订阅关系
+  rpc SyncSubscriptions(SyncSubscriptionsRequest) returns (SyncSubscriptionsResponse);
+
+  // 转发发布消息
+  rpc ForwardPublish(PublishForward) returns (ForwardAck);
+
+  // 批量更新路由
+  rpc BatchUpdateRoutes(BatchUpdateRoutesRequest) returns (BatchUpdateRoutesResponse);
+
+  // 同步集群配置
+  rpc SyncConfig(SyncConfigRequest) returns (SyncConfigResponse);
+
+  // 获取集群统计信息
+  rpc GetClusterStats(ClusterStatsRequest) returns (ClusterStatsResponse);
+}

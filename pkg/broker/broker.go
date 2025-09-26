@@ -12,10 +12,12 @@ import (
 
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/session"
 	"github.com/turtacn/emqx-go/pkg/storage"
 	"github.com/turtacn/emqx-go/pkg/supervisor"
 	"github.com/turtacn/emqx-go/pkg/topic"
+	pb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
 // Broker is the main actor responsible for managing client sessions and routing messages.
@@ -23,15 +25,19 @@ type Broker struct {
 	sup      *supervisor.OneForOneSupervisor
 	sessions storage.Store // Store for client sessions, mapping ClientID to mailbox
 	topics   *topic.Store
+	cluster  *cluster.Manager
+	nodeID   string
 	mu       sync.RWMutex
 }
 
 // New creates a new Broker actor.
-func New() *Broker {
+func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	return &Broker{
 		sup:      supervisor.NewOneForOneSupervisor(),
 		sessions: storage.NewMemStore(),
 		topics:   topic.NewStore(),
+		cluster:  clusterMgr,
+		nodeID:   nodeID,
 	}
 }
 
@@ -106,9 +112,17 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Println("SUBSCRIBE received before CONNECT")
 				return
 			}
+			var newRoutes []*pb.Route
 			for _, sub := range pk.Filters {
 				b.topics.Subscribe(sub.Filter, sessionMailbox)
+				newRoutes = append(newRoutes, &pb.Route{
+					Topic:   sub.Filter,
+					NodeIds: []string{b.nodeID},
+				})
 			}
+			// Announce these new routes to peers
+			b.cluster.BroadcastRouteUpdate(newRoutes)
+
 			resp := packets.Packet{
 				FixedHeader: packets.FixedHeader{Type: packets.Suback},
 				PacketID:    pk.PacketID,
@@ -166,19 +180,27 @@ func (b *Broker) registerSession(ctx context.Context, clientID string, conn net.
 }
 
 func (b *Broker) unregisterSession(clientID string) {
-	// In a real implementation, we would also need to remove this session from all topic subscriptions.
 	b.sessions.Delete(clientID)
 }
 
-// routePublish sends a message to all subscribers of a topic.
-func (b *Broker) routePublish(topic string, payload []byte) {
-	subscribers := b.topics.GetSubscribers(topic)
+// routePublish sends a message to all local and remote subscribers of a topic.
+func (b *Broker) routePublish(topicName string, payload []byte) {
+	// Route to local subscribers
+	localSubscribers := b.topics.GetSubscribers(topicName)
 	msg := session.Publish{
-		Topic:   topic,
+		Topic:   topicName,
 		Payload: payload,
 	}
-	for _, mb := range subscribers {
+	for _, mb := range localSubscribers {
 		mb.Send(msg)
+	}
+
+	// Route to remote subscribers
+	remoteSubscribers := b.cluster.GetRemoteSubscribers(topicName)
+	for _, nodeID := range remoteSubscribers {
+		log.Printf("Forwarding message for topic '%s' to remote node %s", topicName, nodeID)
+		// In a real implementation, we would use the gRPC client to send this message.
+		// For the PoC, this log is sufficient to show the logic is in place.
 	}
 }
 

@@ -34,7 +34,8 @@ func TestBroker_MqttContract_PubSub(t *testing.T) {
 	require.NoError(t, err)
 	addr := fmt.Sprintf("tcp://localhost:%d", port)
 
-	broker := New()
+	clusterMgr := cluster.NewManager("test-node", "localhost:8081")
+	broker := New("test-node", clusterMgr)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
