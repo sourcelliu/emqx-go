@@ -1,3 +1,17 @@
+// Copyright 2023 The emqx-go Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package session
 
 import (
@@ -10,19 +24,32 @@ import (
 	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
-// Publish is the message type for publishing a message to a client.
+// Publish represents a message to be published to a client.
+// It is sent to a Session actor, which then writes the message to the
+// client's connection.
 type Publish struct {
-	Topic   string
+	// Topic is the topic to which the message is published.
+	Topic string
+	// Payload is the message content.
 	Payload []byte
 }
 
-// Session is an actor that manages writing messages to a single client's connection.
+// Session is an actor responsible for managing a single client's connection.
+// Its primary role is to receive messages from the broker and write them to the
+// client's network connection. Each connected client has its own Session actor.
 type Session struct {
-	ID   string
+	// ID is the unique identifier for the client session, typically the MQTT
+	// ClientID.
+	ID string
+	// conn is the network connection to the client. It is used to write
+	// outgoing messages.
 	conn io.Writer
 }
 
 // New creates a new Session actor.
+//
+// id is the client identifier.
+// conn is the client's network connection.
 func New(id string, conn io.Writer) *Session {
 	return &Session{
 		ID:   id,
@@ -30,8 +57,15 @@ func New(id string, conn io.Writer) *Session {
 	}
 }
 
-// Start is the main loop for the Session actor.
-// It listens for Publish messages and writes them to the client's connection.
+// Start is the main loop for the Session actor. It implements the actor.Actor
+// interface.
+//
+// The loop continuously receives messages from its mailbox. When it receives a
+// Publish message, it encodes it into an MQTT PUBLISH packet and writes it to
+// the client's connection.
+//
+// The actor terminates when the context is canceled or an error occurs during
+// message processing or writing to the connection.
 func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 	log.Printf("Session actor started for client %s", s.ID)
 	for {

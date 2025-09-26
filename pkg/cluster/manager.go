@@ -1,3 +1,20 @@
+// Copyright 2023 The emqx-go Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// package cluster provides the functionality for creating a cluster of EMQX-Go
+// nodes. It handles peer discovery, state synchronization, and message routing
+// between nodes using gRPC.
 package cluster
 
 import (
@@ -9,16 +26,22 @@ import (
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
-// Manager handles the state of the cluster, including peer connections and routing tables.
+// Manager is the central component for managing cluster-related activities.
+// It maintains the state of the cluster, including the list of connected peers
+// and the routing table for message forwarding. It is responsible for initiating
+// connections to other nodes and broadcasting state changes.
 type Manager struct {
-	NodeID       string
-	NodeAddress  string // The gRPC address of this node
+	// NodeID is the unique identifier for this node in the cluster.
+	NodeID string
+	// NodeAddress is the gRPC address that this node listens on for cluster
+	// communication.
+	NodeAddress string
 	peers        map[string]*Client
 	remoteRoutes map[string][]string // Map of Topic to list of NodeIDs
 	mu           sync.RWMutex
 }
 
-// NewManager creates a new cluster manager.
+// NewManager creates and returns a new instance of the cluster Manager.
 func NewManager(nodeID, nodeAddress string) *Manager {
 	return &Manager{
 		NodeID:       nodeID,
@@ -28,7 +51,9 @@ func NewManager(nodeID, nodeAddress string) *Manager {
 	}
 }
 
-// AddPeer connects to a new peer and attempts to join the cluster.
+// AddPeer establishes a connection to a new peer and sends a request to join
+// the cluster. If the connection and join request are successful, the peer is
+// added to the manager's list of active peers.
 func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 	m.mu.Lock()
 	if _, exists := m.peers[peerID]; exists {
@@ -71,7 +96,8 @@ func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 	}
 }
 
-// BroadcastRouteUpdate sends a route update to all connected peers.
+// BroadcastRouteUpdate sends a route update to all connected peers in the cluster.
+// This is used to inform other nodes about new subscriptions on this node.
 func (m *Manager) BroadcastRouteUpdate(routes []*clusterpb.Route) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -91,8 +117,8 @@ func (m *Manager) BroadcastRouteUpdate(routes []*clusterpb.Route) {
 	}
 }
 
-// AddRemoteRoute is called when a route update is received from a peer.
-// In a real implementation, the gRPC server would call this.
+// AddRemoteRoute adds a route for a topic to a remote node. This method is
+// typically called by the gRPC server when it receives a route update from a peer.
 func (m *Manager) AddRemoteRoute(topic, nodeID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -100,7 +126,8 @@ func (m *Manager) AddRemoteRoute(topic, nodeID string) {
 	m.remoteRoutes[topic] = append(m.remoteRoutes[topic], nodeID)
 }
 
-// GetRemoteSubscribers returns the node IDs for a given topic.
+// GetRemoteSubscribers returns a list of node IDs that have subscribers for a
+// given topic. This is used to determine which nodes to forward a message to.
 func (m *Manager) GetRemoteSubscribers(topic string) []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -1,0 +1,47 @@
+# .golangci.yml
+# Configuration for golangci-lint, the Go linter aggregator.
+
+run:
+  # The default concurrency is the number of available CPU cores.
+  # Let's be explicit for clarity.
+  concurrency: 4
+  # Timeout for analysis, e.g., 5 minutes.
+  timeout: 5m
+  # Exit code when issues are found.
+  issues-exit-code: 1
+  # Include test files in the analysis.
+  tests: true
+
+linters-settings:
+  govet:
+    # Enable all analyzers.
+    enable-all: true
+  gofmt:
+    # Simplify code.
+    simplify: true
+
+linters:
+  # We are explicitly disabling all linters first and then enabling only the ones we want.
+  # This provides better control and avoids surprises when new linters are added to the default set.
+  disable-all: true
+  enable:
+    # --- Core Linters ---
+    - gofmt      # Checks if the code is formatted according to gofmt.
+    - govet      # Reports suspicious constructs.
+    - staticcheck # A suite of static analysis checks.
+    - unused     # Checks for unused constants, functions, types, and variables.
+    - errcheck   # Checks for unchecked errors in go programs.
+
+issues:
+  # Maximum issues of the same type to report.
+  max-same-issues: 50
+  # Exclude some default exclusions to have broader coverage.
+  exclude-use-default: false
+  # Exclude rules for specific files or paths.
+  exclude-rules:
+    # Exclude generated files from protobuf from some checks.
+    - path: "pkg/proto/.*\\.pb\\.go$"
+      linters:
+        - gofmt
+        - unused
+        - staticcheck

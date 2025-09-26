@@ -1,3 +1,17 @@
+// Copyright 2023 The emqx-go Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package broker
 
 import (
@@ -20,7 +34,9 @@ import (
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
-// Broker is the main actor responsible for managing client sessions and routing messages.
+// Broker is the central component of the MQTT server. It is responsible for
+// accepting client connections, managing client sessions, and routing messages
+// between clients. It acts as a supervisor for all session actors.
 type Broker struct {
 	sup      *supervisor.OneForOneSupervisor
 	sessions storage.Store // Store for client sessions, mapping ClientID to mailbox
@@ -30,7 +46,11 @@ type Broker struct {
 	mu       sync.RWMutex
 }
 
-// New creates a new Broker actor.
+// New creates a new Broker instance.
+// It initializes the supervisor, session storage, topic store, and cluster manager.
+//
+// nodeID is the unique identifier for this broker instance in the cluster.
+// clusterMgr is the manager responsible for cluster communication.
 func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	return &Broker{
 		sup:      supervisor.NewOneForOneSupervisor(),
@@ -41,7 +61,12 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	}
 }
 
-// StartServer begins listening for incoming TCP connections.
+// StartServer begins listening for incoming TCP connections on the specified address.
+// It spawns a new goroutine for each incoming connection to handle the MQTT protocol.
+// This method blocks until the provided context is canceled.
+//
+// ctx is the context to control the lifecycle of the server.
+// addr is the network address to listen on, e.g., ":1883".
 func (b *Broker) StartServer(ctx context.Context, addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -71,7 +96,9 @@ func (b *Broker) StartServer(ctx context.Context, addr string) error {
 	return nil
 }
 
-// handleConnection manages a single client connection using the real MQTT protocol.
+// handleConnection is responsible for the lifecycle of a single client connection.
+// It reads MQTT packets from the connection, processes them, and handles the
+// registration and unregistration of the client's session.
 func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
 	log.Printf("Accepted connection from %s", conn.RemoteAddr())
@@ -157,6 +184,9 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
+// registerSession creates a new session actor for a client or retrieves an existing one.
+// It sets up the session actor under the broker's supervisor and stores the session's
+// mailbox for message routing.
 func (b *Broker) registerSession(ctx context.Context, clientID string, conn net.Conn) *actor.Mailbox {
 	if mb, err := b.sessions.Get(clientID); err == nil {
 		log.Printf("Client %s is reconnecting, session exists.", clientID)
@@ -179,11 +209,15 @@ func (b *Broker) registerSession(ctx context.Context, clientID string, conn net.
 	return mb
 }
 
+// unregisterSession removes a client's session from the broker.
+// This is called when a client disconnects.
 func (b *Broker) unregisterSession(clientID string) {
 	b.sessions.Delete(clientID)
 }
 
-// routePublish sends a message to all local and remote subscribers of a topic.
+// routePublish sends a published message to all subscribers of a topic.
+// It handles both local subscribers on the same broker instance and forwards
+// messages to remote subscribers on other nodes in the cluster.
 func (b *Broker) routePublish(topicName string, payload []byte) {
 	// Route to local subscribers
 	localSubscribers := b.topics.GetSubscribers(topicName)
@@ -204,7 +238,8 @@ func (b *Broker) routePublish(topicName string, payload []byte) {
 	}
 }
 
-// readPacket is a helper to read a full MQTT packet from a connection.
+// readPacket is a helper function to read a full MQTT packet from a buffered reader.
+// It decodes the fixed header and the variable part of the packet.
 func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 	fh := new(packets.FixedHeader)
 	b, err := r.ReadByte()
@@ -246,7 +281,7 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 	return pk, err
 }
 
-// writePacket is a helper to encode and write a packet to a connection.
+// writePacket is a helper function to encode and write an MQTT packet to a writer.
 func writePacket(w io.Writer, pk *packets.Packet) error {
 	var buf bytes.Buffer
 	var err error

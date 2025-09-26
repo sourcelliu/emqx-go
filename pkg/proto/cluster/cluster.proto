@@ -3,182 +3,255 @@ syntax = "proto3";
 package proto;
 option go_package = "github.com/turtacn/emqx-go/pkg/proto/cluster;clusterpb";
 
-// 节点基本信息
+// NodeInfo contains basic information about a node in the cluster.
 message NodeInfo {
-  string node_id = 1;      // 节点唯一标识
-  string address = 2;      // 节点网络地址 (ip:port)
-  string version = 3;      // EMQX版本
-  int64 uptime = 4;        // 运行时间(秒)
-  int32 status = 5;        // 节点状态(1=运行中, 2=离线, 3=正在启动)
-  int64 last_seen = 6;     // 最后活跃时间戳
+  // Unique identifier for the node.
+  string node_id = 1;
+  // Network address of the node (e.g., "ip:port").
+  string address = 2;
+  // Version of the EMQX application running on the node.
+  string version = 3;
+  // Uptime of the node in seconds.
+  int64 uptime = 4;
+  // Status of the node (e.g., 1=running, 2=offline, 3=starting).
+  int32 status = 5;
+  // Timestamp of the last time the node was seen active.
+  int64 last_seen = 6;
 }
 
-// 集群节点加入请求
+// JoinRequest is sent by a node when it wants to join the cluster.
 message JoinRequest {
-  NodeInfo node = 1;       // 加入的节点信息
-  string token = 2;        // 集群认证令牌
-  int64 timestamp = 3;     // 请求时间戳
-}
-
-// 集群节点加入响应
-message JoinResponse {
-  bool success = 1;
-  string message = 2;
-  repeated NodeInfo cluster_nodes = 3;  // 当前集群节点列表
-  string cluster_id = 4;                // 集群唯一标识
-}
-
-// 集群节点离开请求
-message LeaveRequest {
-  string node_id = 1;      // 要离开的节点ID
-  bool force = 2;          // 是否强制离开
-}
-
-// 集群节点离开响应
-message LeaveResponse {
-  bool success = 1;
-  string message = 2;
-  repeated NodeInfo remaining_nodes = 3;  // 剩余节点列表
-}
-
-// 节点状态同步请求
-message SyncNodeStatusRequest {
+  // Information about the node that is joining.
   NodeInfo node = 1;
-  repeated NodeInfo known_nodes = 2;  // 已知节点状态
-}
-
-// 节点状态同步响应
-message SyncNodeStatusResponse {
-  bool success = 1;
-  string message = 2;
-  repeated NodeInfo all_nodes = 3;    // 全量节点状态
-}
-
-// 订阅关系信息
-message Subscription {
-  string client_id = 1;    // 客户端ID
-  string topic_filter = 2; // 主题过滤器
-  int32 qos = 3;           // QoS等级
-  bool no_local = 4;       // 是否不接收自己发布的消息
-  bool retain_as_published = 5; // 保留消息发布模式
-  int32 retain_handling = 6;    // 保留消息处理策略
-}
-
-// 订阅关系同步请求
-message SyncSubscriptionsRequest {
-  string node_id = 1;
-  repeated Subscription subscriptions = 2;  // 订阅列表
-  bool full_sync = 3;                       // 是否全量同步
-}
-
-// 订阅关系同步响应
-message SyncSubscriptionsResponse {
-  bool success = 1;
-  string message = 2;
-  int32 received_count = 3;  // 接收的订阅数量
-}
-
-// 消息发布转发
-message PublishForward {
-  string message_id = 1;     // 消息唯一标识
-  string topic = 2;          // 主题
-  bytes payload = 3;         // 消息体
-  int32 qos = 4;             // QoS等级
-  bool retain = 5;           // 是否保留消息
-  bool dup = 6;              // 是否重发消息
-  string from_node = 7;      // 来源节点ID
-  string from_client = 8;    // 来源客户端ID
-  int64 timestamp = 9;       // 消息时间戳
-  map<string, bytes> user_properties = 10;  // 用户属性
-}
-
-// 消息转发确认
-message ForwardAck {
-  string message_id = 1;
-  bool success = 2;
-  string message = 3;
-  string to_node = 4;
-}
-
-// 主题路由信息
-message Route {
-  string topic = 1;                // 主题
-  repeated string node_ids = 2;    // 负责该主题的节点ID列表
-  int64 update_time = 3;           // 最后更新时间
-}
-
-// 路由更新批量请求
-message BatchUpdateRoutesRequest {
-  repeated Route routes = 1;       // 路由列表
-  string op_type = 2;              // 操作类型("add", "delete", "update")
-  string from_node = 3;            // 发起节点ID
-}
-
-// 路由更新响应
-message BatchUpdateRoutesResponse {
-  bool success = 1;
-  string message = 2;
-  int32 updated_count = 3;         // 更新的路由数量
-}
-
-// 集群配置同步请求
-message SyncConfigRequest {
-  string node_id = 1;
-  string config_key = 2;           // 配置键(为空表示全量)
-  map<string, string> configs = 3; // 配置键值对
-}
-
-// 集群配置同步响应
-message SyncConfigResponse {
-  bool success = 1;
-  string message = 2;
-  map<string, string> configs = 3; // 完整配置(仅当请求为空时返回)
-}
-
-// 集群统计信息请求
-message ClusterStatsRequest {
-  string node_id = 1;              // 特定节点(为空表示所有节点)
-  repeated string metrics = 2;     // 要获取的指标(为空表示所有)
-}
-
-// 节点统计信息
-message NodeStats {
-  string node_id = 1;
-  map<string, int64> metrics = 2;  // 指标键值对
+  // Authentication token for the cluster.
+  string token = 2;
+  // Timestamp of the request.
   int64 timestamp = 3;
 }
 
-// 集群统计信息响应
-message ClusterStatsResponse {
+// JoinResponse is the response to a JoinRequest.
+message JoinResponse {
+  // Indicates whether the join was successful.
   bool success = 1;
+  // A message providing details about the result of the join operation.
   string message = 2;
-  repeated NodeStats node_stats = 3;  // 节点统计信息列表
+  // List of all nodes currently in the cluster.
+  repeated NodeInfo cluster_nodes = 3;
+  // Unique identifier for the cluster.
+  string cluster_id = 4;
+}
+
+// LeaveRequest is sent by a node when it wants to leave the cluster.
+message LeaveRequest {
+  // ID of the node that is leaving.
+  string node_id = 1;
+  // Whether to force the node to leave.
+  bool force = 2;
+}
+
+// LeaveResponse is the response to a LeaveRequest.
+message LeaveResponse {
+  // Indicates whether the leave operation was successful.
+  bool success = 1;
+  // A message providing details about the result of the leave operation.
+  string message = 2;
+  // List of nodes remaining in the cluster.
+  repeated NodeInfo remaining_nodes = 3;
+}
+
+// SyncNodeStatusRequest is sent to synchronize the status of nodes.
+message SyncNodeStatusRequest {
+  // The node sending the synchronization request.
+  NodeInfo node = 1;
+  // The list of nodes known to the sender.
+  repeated NodeInfo known_nodes = 2;
+}
+
+// SyncNodeStatusResponse is the response to a SyncNodeStatusRequest.
+message SyncNodeStatusResponse {
+  // Indicates whether the synchronization was successful.
+  bool success = 1;
+  // A message providing details about the result of the synchronization.
+  string message = 2;
+  // The complete list of all nodes in the cluster.
+  repeated NodeInfo all_nodes = 3;
+}
+
+// Subscription represents a single client subscription.
+message Subscription {
+  // ID of the client that made the subscription.
+  string client_id = 1;
+  // The topic filter for the subscription.
+  string topic_filter = 2;
+  // The Quality of Service level for the subscription.
+  int32 qos = 3;
+  // Whether to prevent the subscriber from receiving its own messages.
+  bool no_local = 4;
+  // Whether to retain the message's published status.
+  bool retain_as_published = 5;
+  // The policy for handling retained messages.
+  int32 retain_handling = 6;
+}
+
+// SyncSubscriptionsRequest is sent to synchronize subscriptions between nodes.
+message SyncSubscriptionsRequest {
+  // ID of the node sending the request.
+  string node_id = 1;
+  // List of subscriptions to be synchronized.
+  repeated Subscription subscriptions = 2;
+  // Whether this is a full synchronization or an incremental update.
+  bool full_sync = 3;
+}
+
+// SyncSubscriptionsResponse is the response to a SyncSubscriptionsRequest.
+message SyncSubscriptionsResponse {
+  // Indicates whether the subscription synchronization was successful.
+  bool success = 1;
+  // A message providing details about the result.
+  string message = 2;
+  // The number of subscriptions received.
+  int32 received_count = 3;
+}
+
+// PublishForward is used to forward a published message to another node.
+message PublishForward {
+  // Unique ID for the message.
+  string message_id = 1;
+  // The topic the message was published to.
+  string topic = 2;
+  // The message payload.
+  bytes payload = 3;
+  // The Quality of Service level of the message.
+  int32 qos = 4;
+  // Whether this is a retained message.
+  bool retain = 5;
+  // Whether this is a duplicate message.
+  bool dup = 6;
+  // ID of the node where the message originated.
+  string from_node = 7;
+  // ID of the client that published the message.
+  string from_client = 8;
+  // Timestamp of when the message was published.
+  int64 timestamp = 9;
+  // User-defined properties of the message.
+  map<string, bytes> user_properties = 10;
+}
+
+// ForwardAck is the acknowledgment for a forwarded publish message.
+message ForwardAck {
+  // ID of the message being acknowledged.
+  string message_id = 1;
+  // Indicates whether the forwarding was successful.
+  bool success = 2;
+  // A message providing details about the result.
+  string message = 3;
+  // ID of the node that acknowledged the message.
+  string to_node = 4;
+}
+
+// Route represents the routing information for a topic.
+message Route {
+  // The topic filter.
+  string topic = 1;
+  // List of node IDs that are responsible for this topic.
+  repeated string node_ids = 2;
+  // Timestamp of the last update to this route.
+  int64 update_time = 3;
+}
+
+// BatchUpdateRoutesRequest is used to update routing information in bulk.
+message BatchUpdateRoutesRequest {
+  // List of routes to be updated.
+  repeated Route routes = 1;
+  // The type of operation ("add", "delete", "update").
+  string op_type = 2;
+  // ID of the node that initiated the update.
+  string from_node = 3;
+}
+
+// BatchUpdateRoutesResponse is the response to a BatchUpdateRoutesRequest.
+message BatchUpdateRoutesResponse {
+  // Indicates whether the update was successful.
+  bool success = 1;
+  // A message providing details about the result.
+  string message = 2;
+  // The number of routes that were updated.
+  int32 updated_count = 3;
+}
+
+// SyncConfigRequest is sent to synchronize configuration between nodes.
+message SyncConfigRequest {
+  // ID of the node sending the request.
+  string node_id = 1;
+  // The configuration key to synchronize (or all if empty).
+  string config_key = 2;
+  // Key-value pairs of the configuration to be synchronized.
+  map<string, string> configs = 3;
+}
+
+// SyncConfigResponse is the response to a SyncConfigRequest.
+message SyncConfigResponse {
+  // Indicates whether the synchronization was successful.
+  bool success = 1;
+  // A message providing details about the result.
+  string message = 2;
+  // The full configuration (only returned for a full sync request).
+  map<string, string> configs = 3;
+}
+
+// ClusterStatsRequest is sent to request statistics from the cluster.
+message ClusterStatsRequest {
+  // The specific node to get stats from (or all if empty).
+  string node_id = 1;
+  // The specific metrics to retrieve (or all if empty).
+  repeated string metrics = 2;
+}
+
+// NodeStats contains the statistics for a single node.
+message NodeStats {
+  // ID of the node these stats belong to.
+  string node_id = 1;
+  // Key-value pairs of the statistical metrics.
+  map<string, int64> metrics = 2;
+  // Timestamp of when the stats were collected.
+  int64 timestamp = 3;
+}
+
+// ClusterStatsResponse is the response to a ClusterStatsRequest.
+message ClusterStatsResponse {
+  // Indicates whether the request was successful.
+  bool success = 1;
+  // A message providing details about the result.
+  string message = 2;
+  // List of statistics for each node.
+  repeated NodeStats node_stats = 3;
+  // Timestamp of when the cluster-wide stats were collected.
   int64 timestamp = 4;
 }
 
-// 集群服务接口定义
+// ClusterService defines the gRPC service for cluster communication.
 service ClusterService {
-  // 节点加入集群
+  // Allows a node to join the cluster.
   rpc Join(JoinRequest) returns (JoinResponse);
 
-  // 节点离开集群
+  // Allows a node to leave the cluster.
   rpc Leave(LeaveRequest) returns (LeaveResponse);
 
-  // 同步节点状态
+  // Synchronizes the status of nodes in the cluster.
   rpc SyncNodeStatus(SyncNodeStatusRequest) returns (SyncNodeStatusResponse);
 
-  // 同步订阅关系
+  // Synchronizes client subscriptions across the cluster.
   rpc SyncSubscriptions(SyncSubscriptionsRequest) returns (SyncSubscriptionsResponse);
 
-  // 转发发布消息
+  // Forwards a published message to another node for local delivery.
   rpc ForwardPublish(PublishForward) returns (ForwardAck);
 
-  // 批量更新路由
+  // Updates routing information in bulk across the cluster.
   rpc BatchUpdateRoutes(BatchUpdateRoutesRequest) returns (BatchUpdateRoutesResponse);
 
-  // 同步集群配置
+  // Synchronizes configuration between nodes.
   rpc SyncConfig(SyncConfigRequest) returns (SyncConfigResponse);
 
-  // 获取集群统计信息
+  // Retrieves statistical information from the cluster.
   rpc GetClusterStats(ClusterStatsRequest) returns (ClusterStatsResponse);
 }
