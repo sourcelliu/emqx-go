@@ -13,8 +13,6 @@
 // limitations under the License.
 
 // package topic provides an in-memory store for managing MQTT topic subscriptions.
-// It allows for subscribing, unsubscribing, and retrieving subscribers for a given
-// topic in a thread-safe manner.
 package topic
 
 import (
@@ -23,33 +21,28 @@ import (
 	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
-// Store manages topic subscriptions and facilitates message routing.
-// It uses a map to associate topics with a list of subscriber mailboxes.
-// This implementation is a simple in-memory store, suitable for a proof-of-concept,
-// and is safe for concurrent use.
+// Store manages topic subscriptions and message routing.
+// This is a simple in-memory implementation for the PoC.
 type Store struct {
 	subscriptions map[string][]*actor.Mailbox
 	mu            sync.RWMutex
 }
 
-// NewStore creates and returns a new instance of a topic Store.
+// NewStore creates a new topic store.
 func NewStore() *Store {
 	return &Store{
 		subscriptions: make(map[string][]*actor.Mailbox),
 	}
 }
 
-// Subscribe adds a subscriber's mailbox to a topic's subscription list.
-// If the topic does not exist, it is created.
+// Subscribe adds a subscriber's mailbox to a topic.
 func (s *Store) Subscribe(topic string, mailbox *actor.Mailbox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subscriptions[topic] = append(s.subscriptions[topic], mailbox)
 }
 
-// Unsubscribe removes a subscriber's mailbox from a topic's subscription list.
-// If the mailbox is the last subscriber for a topic, the topic is removed from
-// the store.
+// Unsubscribe removes a subscriber's mailbox from a topic.
 func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -68,9 +61,8 @@ func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 	}
 }
 
-// GetSubscribers returns a slice of all mailboxes subscribed to a given topic.
-// It returns a copy of the subscriber list to prevent race conditions when the
-// list is being iterated over by the caller.
+// GetSubscribers returns all mailboxes subscribed to a topic.
+// NOTE: This is a simplified implementation that does not handle wildcards.
 func (s *Store) GetSubscribers(topic string) []*actor.Mailbox {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

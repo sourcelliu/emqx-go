@@ -13,8 +13,7 @@
 // limitations under the License.
 
 // package storage provides a generic key-value store interface and an in-memory
-// implementation. This is used by the broker to store session information and
-// other data that needs to be persisted or shared.
+// implementation.
 package storage
 
 import (
@@ -28,40 +27,28 @@ var (
 )
 
 // Store defines the interface for a generic key-value store.
-// This interface provides basic CRUD operations for storing and retrieving data.
-// It is designed to be implementation-agnostic, allowing for different storage
-// backends, such as in-memory, disk-based, or distributed stores.
+// This allows for different storage backends (e.g., in-memory, Redis, etc.).
 type Store interface {
-	// Get retrieves a value from the store by its key.
-	// It returns the value and a nil error on success.
-	// If the key is not found, it returns nil and ErrNotFound.
-	Get(key string) (interface{}, error)
-	// Set adds or updates a value in the store.
-	// It takes a key and a value, and returns an error if the operation fails.
-	Set(key string, value interface{}) error
-	// Delete removes a value from the store by its key.
-	// It returns an error if the operation fails.
+	Get(key string) (any, error)
+	Set(key string, value any) error
 	Delete(key string) error
 }
 
-// MemStore is an in-memory implementation of the Store interface.
-// It uses a map to store key-value pairs and a RWMutex to ensure thread safety,
-// making it safe for concurrent use.
+// MemStore is a thread-safe, in-memory implementation of the Store interface.
 type MemStore struct {
-	data map[string]interface{}
+	data map[string]any
 	mu   sync.RWMutex
 }
 
-// NewMemStore creates and returns a new instance of MemStore.
+// NewMemStore creates a new in-memory store.
 func NewMemStore() *MemStore {
 	return &MemStore{
-		data: make(map[string]interface{}),
+		data: make(map[string]any),
 	}
 }
 
-// Get retrieves a value from the in-memory store.
-// It uses a read lock to allow for concurrent reads.
-func (s *MemStore) Get(key string) (interface{}, error) {
+// Get retrieves a value from the store by its key.
+func (s *MemStore) Get(key string) (any, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	value, ok := s.data[key]
@@ -71,19 +58,15 @@ func (s *MemStore) Get(key string) (interface{}, error) {
 	return value, nil
 }
 
-// Set adds or updates a value in the in-memory store.
-// It uses a write lock to ensure that only one goroutine can modify the store
-// at a time.
-func (s *MemStore) Set(key string, value interface{}) error {
+// Set adds or updates a value in the store.
+func (s *MemStore) Set(key string, value any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data[key] = value
 	return nil
 }
 
-// Delete removes a value from the in-memory store.
-// It uses a write lock to ensure that only one goroutine can modify the store
-// at a time.
+// Delete removes a value from the store by its key.
 func (s *MemStore) Delete(key string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

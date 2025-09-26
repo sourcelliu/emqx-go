@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// package session provides the actor implementation for managing a single
+// client session.
 package session
 
 import (
@@ -24,32 +26,21 @@ import (
 	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
-// Publish represents a message to be published to a client.
-// It is sent to a Session actor, which then writes the message to the
-// client's connection.
+// Publish is the message type sent to a Session actor to publish a message
+// to the connected client.
 type Publish struct {
-	// Topic is the topic to which the message is published.
-	Topic string
-	// Payload is the message content.
+	Topic   string
 	Payload []byte
 }
 
-// Session is an actor responsible for managing a single client's connection.
-// Its primary role is to receive messages from the broker and write them to the
-// client's network connection. Each connected client has its own Session actor.
+// Session is an actor that manages the state for a single client connection.
+// Its primary responsibility is to write outgoing messages to the client.
 type Session struct {
-	// ID is the unique identifier for the client session, typically the MQTT
-	// ClientID.
-	ID string
-	// conn is the network connection to the client. It is used to write
-	// outgoing messages.
+	ID   string
 	conn io.Writer
 }
 
 // New creates a new Session actor.
-//
-// id is the client identifier.
-// conn is the client's network connection.
 func New(id string, conn io.Writer) *Session {
 	return &Session{
 		ID:   id,
@@ -57,15 +48,8 @@ func New(id string, conn io.Writer) *Session {
 	}
 }
 
-// Start is the main loop for the Session actor. It implements the actor.Actor
-// interface.
-//
-// The loop continuously receives messages from its mailbox. When it receives a
-// Publish message, it encodes it into an MQTT PUBLISH packet and writes it to
-// the client's connection.
-//
-// The actor terminates when the context is canceled or an error occurs during
-// message processing or writing to the connection.
+// Start is the main loop for the Session actor. It listens for messages on its
+// mailbox and processes them.
 func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 	log.Printf("Session actor started for client %s", s.ID)
 	for {
@@ -77,6 +61,8 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 
 		switch m := msg.(type) {
 		case Publish:
+			// When a Publish message is received, create an MQTT PUBLISH packet
+			// and write it to the client's connection.
 			pk := &packets.Packet{
 				FixedHeader: packets.FixedHeader{Type: packets.Publish, Qos: 0},
 				TopicName:   m.Topic,
@@ -89,9 +75,8 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 			}
 			if _, err := s.conn.Write(buf.Bytes()); err != nil {
 				log.Printf("Error writing to client %s: %v", s.ID, err)
-				// Returning an error will cause the supervisor to restart this actor,
-				// but the connection will likely be dead. A real implementation
-				// would need more sophisticated error handling here.
+				// Returning an error will cause the supervisor to treat this as a
+				// failure and restart the actor if the strategy allows.
 				return err
 			}
 		default:

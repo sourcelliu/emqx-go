@@ -1,18 +1,21 @@
+# k8s/pod.yaml
+# A simple Kubernetes Pod definition for the EMQX-Go Broker PoC.
+
 apiVersion: v1
 kind: Pod
 metadata:
-  name: emqx-go-poc
+  name: emqx-go-pod
   labels:
     app: emqx-go
 spec:
   containers:
   - name: emqx-go
-    # In a real scenario, this would point to a tagged image in a registry
-    # e.g., myregistry.com/emqx-go:phase-2
-    image: emqx-go:poc
-    # imagePullPolicy: IfNotPresent is useful for local development with minikube,
-    # as it will use a locally built image if the tag matches.
-    imagePullPolicy: IfNotPresent
+    # The image name should be replaced with the actual image built and pushed
+    # to a container registry, e.g., "your-registry/emqx-go:latest".
+    image: emqx-go:latest
+    # We use "Never" for local testing with images built on the node.
+    # In a real deployment, this would be "IfNotPresent" or "Always".
+    imagePullPolicy: Never
     ports:
     - containerPort: 1883
       name: mqtt

@@ -1,50 +1,30 @@
-# Phase 2: Risk Analysis for MQTT Basic Protocol PoC
+# Phase 2 Risk Analysis: MQTT Basic Protocol PoC
 
-This document outlines the risks associated with the Proof-of-Concept (PoC) for the basic MQTT broker.
+This document outlines the potential risks and limitations of the minimal MQTT broker proof-of-concept (PoC) developed in Phase 2.
 
 ## 1. Single Point of Failure (SPOF)
 
-*   **Risk:** The current PoC runs as a single instance. If this pod or the node it runs on fails, the entire service becomes unavailable. There is no redundancy. All client connections will be dropped, and the service will be down until the pod is rescheduled and restarted.
+*   **Risk**: The current implementation is a single-node broker. If this single instance crashes or becomes unavailable for any reason, the entire service goes down. All active client connections will be dropped, and no new connections can be made until the broker is manually restarted. This design has zero fault tolerance.
 
-*   **Likelihood:** High (Failures are inevitable in any distributed system).
+*   **Mitigation Strategy**: This is the primary risk that will be addressed in **Phase 3: Clustering & Routing PoC**. By implementing a clustered architecture, we can have multiple nodes running the broker. If one node fails, clients can reconnect to other nodes in the cluster, and the service can remain available.
 
-*   **Impact:** High (Total loss of service availability).
+## 2. Data Loss on Restart (In-Memory Storage)
 
-*   **Mitigation Strategies:**
-    1.  **Clustering (Phase 3):** The primary mitigation is to implement a clustering mechanism, which is the goal of Phase 3. This will involve multiple nodes that can take over for each other.
-    2.  **Kubernetes Deployments:** Using a Kubernetes `Deployment` or `StatefulSet` with a `replica` count greater than 1 will ensure that Kubernetes automatically maintains a desired number of running instances. This is a prerequisite for high availability.
+*   **Risk**: All critical data, including session information and topic subscriptions, is stored in memory using `MemStore` and `topic.Store`. If the broker process is restarted, all of this state is lost. This means:
+    *   Clients with non-clean sessions will lose their session state.
+    *   All subscription information will be wiped out, and clients will need to re-subscribe.
+    *   Any in-flight messages or retained messages (if they were implemented) would be lost.
 
-## 2. Data Loss on Restart
+*   **Mitigation Strategy**: This risk will be addressed in **Phase 4: Data Migration Design & Scripts**. We will replace the in-memory stores with a pluggable interface that can connect to persistent storage solutions like Redis (for caching/session data) and Postgres (for more durable storage). This will allow session and subscription data to survive restarts.
 
-*   **Risk:** The broker's state (session information, subscriptions) is stored entirely in memory (`storage.MemStore`). When the pod restarts for any reason (crash, deployment, node failure), all of this state is lost. Clients will have to reconnect and re-subscribe, and any notion of a persistent session is non-existent.
+## 3. No Scalability
 
-*   **Likelihood:** High (Restarts are a normal part of a container's lifecycle).
+*   **Risk**: The current single-node architecture has a hard limit on the number of concurrent connections and message throughput it can handle, bound by the resources (CPU, memory) of a single machine. It cannot scale horizontally to accommodate a growing number of clients or higher message volumes.
 
-*   **Impact:** Medium to High (Disrupts client sessions and violates MQTT QoS > 0 expectations for session persistence).
+*   **Mitigation Strategy**: This is also addressed by the move to a clustered architecture in **Phase 3**. A cluster will allow for horizontal scaling, where the load can be distributed across multiple nodes, significantly increasing the overall capacity of the system.
 
-*   **Mitigation Strategies:**
-    1.  **Persistent Storage Backend (Future Phase):** Replace the `MemStore` with a durable storage backend like Postgres, Redis, or a distributed key-value store. This is a planned activity for a later phase.
-    2.  **Data Replication (Future Phase):** In a clustered environment, session state will need to be replicated across nodes so that if one node fails, another can take over the session seamlessly.
+## 4. Simplified Topic Matching
 
-## 3. Incomplete Protocol Implementation
+*   **Risk**: The current `topic.Store` implementation only supports exact topic matching. It does not handle MQTT wildcards (`+` and `#`), which are a fundamental feature of the protocol. This limits the usefulness of the broker in any realistic scenario.
 
-*   **Risk:** The PoC handles only the most basic MQTT packets (CONNECT, SUBSCRIBE, PUBLISH, PING, DISCONNECT) and does not handle all features like QoS levels above 0, retained messages, Last Will & Testament, etc. This limits its functionality and correctness according to the full MQTT spec.
-
-*   **Likelihood:** Certain (It is intentionally simplified for a PoC).
-
-*   **Impact:** Medium (The broker is functional for basic use cases but not feature-complete).
-
-*   **Mitigation Strategies:**
-    1.  **Iterative Implementation (Future Phases):** Subsequent phases will build upon this foundation, adding support for higher QoS levels, retained messages, and other essential MQTT features.
-    2.  **Comprehensive Testing:** As new features are added, the contract tests must be expanded to validate their correctness.
-
-## 4. Inefficient Message Routing
-
-*   **Risk:** The current broker `routePublish` method uses a hardcoded client ID to route messages, which is only a placeholder for the test to pass. It does not implement a proper topic-based routing mechanism.
-
-*   **Likelihood:** Certain.
-
-*   **Impact:** High (The broker is not a functional pub/sub system yet).
-
-*   **Mitigation Strategies:**
-    1.  **Topic Trie Implementation (Future Phase):** The standard and most efficient way to handle MQTT topic routing is with a Trie data structure. The broker will maintain a global subscription Trie, allowing for very fast lookups of subscribers for any given topic, including wildcard support. This is a critical component to be built in a future phase.
+*   **Mitigation Strategy**: The `topic.Store` will need to be replaced with a more sophisticated implementation, likely based on a trie data structure, which is well-suited for efficient wildcard matching. This will be a necessary enhancement as we move towards a more feature-complete broker.
