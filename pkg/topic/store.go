@@ -3,7 +3,7 @@ package topic
 import (
 	"sync"
 
-	"turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
 // Store manages topic subscriptions and message routing.

@@ -4,8 +4,8 @@ import (
 	"log"
 	"net"
 	"sync"
-	"turtacn/emqx-go/pkg/connection"
-	"turtacn/emqx-go/pkg/supervisor"
+	"github.com/turtacn/emqx-go/pkg/connection"
+	"github.com/turtacn/emqx-go/pkg/supervisor"
 
 	"github.com/asynkron/protoactor-go/actor"
 )

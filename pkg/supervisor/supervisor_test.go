@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
-	"turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
 // mockActor is a controllable actor for testing purposes.

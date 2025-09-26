@@ -2,8 +2,8 @@ package connection
 
 import (
 	"net"
-	"turtacn/emqx-go/pkg/broker"
-	"turtacn/emqx-go/pkg/protocol/mqtt"
+	"github.com/turtacn/emqx-go/pkg/broker"
+	"github.com/turtacn/emqx-go/pkg/protocol/mqtt"
 
 	"github.com/asynkron/protoactor-go/actor"
 )
