@@ -17,7 +17,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/storage"
 	"github.com/turtacn/emqx-go/pkg/supervisor"
 	"github.com/turtacn/emqx-go/pkg/topic"
-	pb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
 // Broker is the main actor responsible for managing client sessions and routing messages.
@@ -112,10 +112,10 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Println("SUBSCRIBE received before CONNECT")
 				return
 			}
-			var newRoutes []*pb.Route
+			var newRoutes []*clusterpb.Route
 			for _, sub := range pk.Filters {
 				b.topics.Subscribe(sub.Filter, sessionMailbox)
-				newRoutes = append(newRoutes, &pb.Route{
+				newRoutes = append(newRoutes, &clusterpb.Route{
 					Topic:   sub.Filter,
 					NodeIds: []string{b.nodeID},
 				})

@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	pb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -13,7 +13,7 @@ import (
 type Client struct {
 	NodeID string
 	conn   *grpc.ClientConn
-	client pb.ClusterServiceClient
+	client clusterpb.ClusterServiceClient
 }
 
 // NewClient creates a new cluster client.
@@ -28,7 +28,7 @@ func (c *Client) Connect(ctx context.Context, targetAddress string) error {
 		return err
 	}
 	c.conn = conn
-	c.client = pb.NewClusterServiceClient(conn)
+	c.client = clusterpb.NewClusterServiceClient(conn)
 	return nil
 }
 
@@ -40,12 +40,12 @@ func (c *Client) Close() {
 }
 
 // Join sends a request to join the cluster.
-func (c *Client) Join(ctx context.Context, req *pb.JoinRequest) (*pb.JoinResponse, error) {
+func (c *Client) Join(ctx context.Context, req *clusterpb.JoinRequest) (*clusterpb.JoinResponse, error) {
 	log.Printf("Sending Join request to peer")
 	return c.client.Join(ctx, req)
 }
 
 // BatchUpdateRoutes sends a batch of route updates to a peer.
-func (c *Client) BatchUpdateRoutes(ctx context.Context, req *pb.BatchUpdateRoutesRequest) (*pb.BatchUpdateRoutesResponse, error) {
+func (c *Client) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpdateRoutesRequest) (*clusterpb.BatchUpdateRoutesResponse, error) {
 	return c.client.BatchUpdateRoutes(ctx, req)
 }
