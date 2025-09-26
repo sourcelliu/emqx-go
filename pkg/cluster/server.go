@@ -4,7 +4,7 @@ import (
 	"context"
 	"log"
 
-	pb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
 // Server implements the gRPC ClusterService server.

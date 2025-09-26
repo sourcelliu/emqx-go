@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
 // Manager handles the state of the cluster, including peer connections and routing tables.
@@ -44,8 +44,8 @@ func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 		return
 	}
 
-	joinReq := &pb.JoinRequest{
-		Node: &pb.NodeInfo{
+	joinReq := &clusterpb.JoinRequest{
+		Node: &clusterpb.NodeInfo{
 			NodeId:  m.NodeID,
 			Address: m.NodeAddress,
 			Version: "0.1.0-poc",
@@ -72,11 +72,11 @@ func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 }
 
 // BroadcastRouteUpdate sends a route update to all connected peers.
-func (m *Manager) BroadcastRouteUpdate(routes []*pb.Route) {
+func (m *Manager) BroadcastRouteUpdate(routes []*clusterpb.Route) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	req := &pb.BatchUpdateRoutesRequest{
+	req := &clusterpb.BatchUpdateRoutesRequest{
 		Routes:   routes,
 		OpType:   "add",
 		FromNode: m.NodeID,

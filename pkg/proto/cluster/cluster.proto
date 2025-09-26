@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package proto;
-option go_package = "github.com/turtacn/emqx-go/pkg/proto/cluster";
+option go_package = "github.com/turtacn/emqx-go/pkg/proto/cluster;clusterpb";
 
 // 节点基本信息
 message NodeInfo {
