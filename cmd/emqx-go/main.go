@@ -15,7 +15,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/discovery"
-	pb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
 const (
@@ -45,7 +45,7 @@ func main() {
 	// --- Start gRPC Server for Clustering ---
 	grpcServer := grpc.NewServer()
 	clusterServer := cluster.NewServer(nodeID)
-	pb.RegisterClusterServiceServer(grpcServer, clusterServer)
+	clusterpb.RegisterClusterServiceServer(grpcServer, clusterServer)
 
 	lis, err := net.Listen("tcp", grpcPort)
 	if err != nil {
