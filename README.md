@@ -5,7 +5,7 @@
 <h1 align="center">emqx-go</h1>
 
 <p align="center">
-  <strong>Next-Generation Unified Identity Authentication & Access Control Platform</strong>
+  <strong>Proof-of-Concept Implementation of the EMQX MQTT broker, rewritten in Go</strong>
 </p>
 
 <p align="center">
