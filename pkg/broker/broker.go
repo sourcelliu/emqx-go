@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package broker contains the main MQTT broker service.
+// Package broker provides the core implementation of the MQTT broker. It is
+// responsible for handling client connections, managing sessions, routing
+// messages, and coordinating with other nodes in a cluster.
 package broker
 
 import (
@@ -36,7 +38,9 @@ import (
 	"github.com/turtacn/emqx-go/pkg/topic"
 )
 
-// Broker is the main actor responsible for managing client sessions and routing messages.
+// Broker is the central component of the MQTT server. It acts as the main
+// supervisor for client sessions and handles the core logic of message routing,
+// session management, and cluster communication.
 type Broker struct {
 	sup      supervisor.Supervisor
 	sessions storage.Store
@@ -46,7 +50,14 @@ type Broker struct {
 	mu       sync.RWMutex
 }
 
-// New creates a new Broker.
+// New creates and initializes a new Broker instance.
+//
+// It sets up the session store, topic store, and supervisor. If a cluster
+// manager is provided, it configures the broker to participate in a cluster by
+// setting the local publish callback.
+//
+// - nodeID: A unique identifier for this broker instance in the cluster.
+// - clusterMgr: A manager for cluster operations. Can be nil for a standalone broker.
 func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	b := &Broker{
 		sup:      supervisor.NewOneForOneSupervisor(),
@@ -62,7 +73,14 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	return b
 }
 
-// StartServer begins listening for incoming TCP connections on the specified address.
+// StartServer starts the MQTT broker's TCP listener on the specified address.
+// It accepts incoming client connections and spawns a goroutine to handle each
+// one. The server will run until the provided context is canceled.
+//
+// - ctx: A context to control the lifecycle of the server.
+// - addr: The network address to listen on (e.g., ":1883").
+//
+// Returns an error if the listener fails to start.
 func (b *Broker) StartServer(ctx context.Context, addr string) error {
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -231,8 +249,15 @@ func (b *Broker) routePublish(topicName string, payload []byte) {
 	}
 }
 
-// RouteToLocalSubscribers sends a message to all local subscribers of a topic.
-// This function is also used as a callback by the cluster manager for forwarded messages.
+// RouteToLocalSubscribers delivers a message to all clients on the current node
+// that are subscribed to the given topic. It retrieves the list of subscribers
+// from the topic store and sends the message to each of their mailboxes.
+//
+// This method is also used as a callback by the cluster manager to handle
+// messages that have been forwarded from other nodes.
+//
+// - topicName: The topic to which the message is published.
+// - payload: The message content.
 func (b *Broker) RouteToLocalSubscribers(topicName string, payload []byte) {
 	subscribers := b.topics.GetSubscribers(topicName)
 	if len(subscribers) > 0 {

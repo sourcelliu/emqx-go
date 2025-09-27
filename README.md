@@ -32,11 +32,12 @@ This repository is a proof-of-concept implementation of the EMQX MQTT broker, re
 
 ## 🌟 Features
 
-*   **MQTT Broker**: Core functionalities such as `CONNECT`, `SUBSCRIBE`, and `PUBLISH` are supported.
-*   **Actor-Based Concurrency**: Inspired by OTP, the system uses an actor model for managing client sessions and other components, providing a robust and scalable architecture.
-*   **Clustering**: Nodes can be clustered together for high availability and distributed message routing.
-*   **Kubernetes Discovery**: Automatic peer discovery in a Kubernetes environment using the Kubernetes API.
-*   **gRPC for Inter-Node Communication**: Efficient and strongly-typed communication between cluster nodes.
+*   **Core MQTT v3.1.1 Broker**: Supports essential MQTT functionalities, including client connections (`CONNECT`), topic subscriptions (`SUBSCRIBE`), and message publishing (`PUBLISH`).
+*   **Actor-Based Concurrency**: Leverages a lightweight, OTP-inspired actor model for robust and concurrent management of client sessions. Includes supervisors that follow the "let it crash" philosophy for fault tolerance.
+*   **Dynamic Clustering**: Nodes can form a distributed cluster for high availability and load distribution. Message routing between nodes is handled automatically.
+*   **Kubernetes-Native Discovery**: Automatically discovers peer nodes within a Kubernetes environment using a headless service, enabling seamless cluster formation.
+*   **High-Performance Communication**: Utilizes gRPC for efficient and strongly-typed inter-node communication for routing, state synchronization, and cluster management.
+*   **Prometheus Metrics**: Exposes key operational metrics (e.g., connection counts, actor restarts) in a Prometheus-compatible format for easy monitoring.
 
 ## 🚀 Getting Started
 
@@ -63,7 +64,10 @@ This repository is a proof-of-concept implementation of the EMQX MQTT broker, re
     ```sh
     ./emqx-go
     ```
-    The broker will start and listen for MQTT connections on port `1883` and gRPC connections on port `8081`.
+    The broker will start and listen for:
+    *   MQTT connections on port `1883`.
+    *   gRPC connections for clustering on port `8081`.
+    *   Prometheus metrics on port `8082` at the `/metrics` endpoint.
 
 ### Connecting an MQTT Client
 
@@ -78,27 +82,29 @@ Once connected, you can subscribe to topics and publish messages to test the bro
 
 The repository is organized into the following main directories:
 
-*   `cmd/emqx-go`: The main application entrypoint.
+*   `cmd/emqx-go`: The main application entrypoint, responsible for initializing and orchestrating all services.
 *   `pkg/`: Contains all the core packages of the broker.
-    *   `actor`: A simple actor model implementation.
-    *   `broker`: The central MQTT broker logic.
-    *   `cluster`: Components for clustering, including the manager, gRPC server, and client.
-    *   `connection`: Manages individual client connections.
-    *   `discovery`: Service discovery, with a Kubernetes implementation.
-    *   `proto`: Protobuf definitions for cluster communication.
-    *   `protocol`: MQTT protocol parsing and encoding.
-    *   `session`: Manages client sessions.
-    *   `storage`: A key-value storage interface and in-memory implementation.
-    *   `supervisor`: A one-for-one supervisor for managing actor lifecycles.
-    *   `topic`: A store for managing topic subscriptions.
-    *   `transport`: Manages the underlying network transport (TCP).
-*   `docs/`: Contains additional documentation.
+    *   `actor`: A lightweight, OTP-inspired actor model for concurrency.
+    *   `broker`: The central MQTT broker logic, responsible for handling connections and orchestrating message flow.
+    *   `cluster`: Components for clustering, including the gRPC server/client and the cluster state manager.
+    *   `discovery`: Service discovery, with a Kubernetes implementation for automatic peer finding.
+    *   `metrics`: Defines and exposes Prometheus metrics for monitoring.
+    *   `proto`: Contains the Protobuf definitions (`.proto` files) and generated Go code for gRPC-based cluster communication.
+    *   `protocol/mqtt`: Low-level parsing and encoding of MQTT packets.
+    *   `session`: An actor-based implementation for managing a single client session.
+    *   `storage`: A generic key-value store interface with an in-memory implementation for session management.
+    *   `supervisor`: An OTP-style supervisor for managing actor lifecycles and implementing fault tolerance.
+    *   `topic`: A thread-safe store for managing topic subscriptions and routing.
+*   `docs/`: Contains additional documentation on architecture and APIs.
 *   `k8s/`: Kubernetes manifests for deploying the application.
-*   `PLAN.md`: A detailed plan outlining the project's development phases and goals.
 
 ## 📚 Documentation
 
-The source code is thoroughly documented using GoDoc conventions. You can generate and view the documentation locally by running:
+The source code is thoroughly documented using GoDoc conventions, providing detailed explanations for all public packages, types, and functions.
+
+You can view the documentation online at [pkg.go.dev](https://pkg.go.dev/github.com/turtacn/emqx-go).
+
+Alternatively, you can generate and view the documentation locally by running:
 
 ```sh
 godoc -http=:6060

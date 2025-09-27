@@ -1,257 +1,302 @@
+// This file defines the gRPC service and messages for inter-node communication
+// in the EMQX-Go cluster. It covers node management, routing, message
+// forwarding, and synchronization of state.
+
 syntax = "proto3";
 
 package proto;
 option go_package = "github.com/turtacn/emqx-go/pkg/proto/cluster;clusterpb";
 
-// NodeInfo contains basic information about a node in the cluster.
+// NodeInfo contains essential information about a single node in the cluster.
+// This message is used for node discovery, status reporting, and cluster management.
 message NodeInfo {
-  // Unique identifier for the node.
+  // node_id is a unique identifier for the node, typically a hostname or a
+  // generated UUID.
   string node_id = 1;
-  // Network address of the node (e.g., "ip:port").
+  // address is the network address (e.g., "ip:port") where the node's gRPC
+  // service is listening.
   string address = 2;
-  // Version of the EMQX application running on the node.
+  // version is the semantic version of the EMQX application running on the node.
   string version = 3;
-  // Uptime of the node in seconds.
+  // uptime is the duration in seconds that the node has been running.
   int64 uptime = 4;
-  // Status of the node (e.g., 1=running, 2=offline, 3=starting).
+  // status represents the current operational state of the node (e.g., 1 for
+  // running, 2 for offline, 3 for starting).
   int32 status = 5;
-  // Timestamp of the last time the node was seen active.
+  // last_seen is a Unix timestamp indicating the last time the node was observed
+  // to be active.
   int64 last_seen = 6;
 }
 
-// JoinRequest is sent by a node when it wants to join the cluster.
+// JoinRequest is sent by a node wishing to become a member of the cluster.
 message JoinRequest {
-  // Information about the node that is joining.
+  // node contains the information about the joining node.
   NodeInfo node = 1;
-  // Authentication token for the cluster.
+  // token is an optional authentication token for securing the cluster.
   string token = 2;
-  // Timestamp of the request.
+  // timestamp is the Unix timestamp of when the join request was initiated.
   int64 timestamp = 3;
 }
 
-// JoinResponse is the response to a JoinRequest.
+// JoinResponse is sent by a cluster member in response to a JoinRequest.
 message JoinResponse {
-  // Indicates whether the join was successful.
+  // success indicates whether the join request was accepted.
   bool success = 1;
-  // A message providing details about the result of the join operation.
+  // message provides a human-readable reason for the success or failure of the
+  // join operation.
   string message = 2;
-  // List of all nodes currently in the cluster.
+  // cluster_nodes is a list of all nodes that are currently members of the
+  // cluster.
   repeated NodeInfo cluster_nodes = 3;
-  // Unique identifier for the cluster.
+  // cluster_id is a unique identifier for the entire cluster.
   string cluster_id = 4;
 }
 
-// LeaveRequest is sent by a node when it wants to leave the cluster.
+// LeaveRequest is sent by a node that intends to gracefully exit the cluster.
 message LeaveRequest {
-  // ID of the node that is leaving.
+  // node_id is the unique identifier of the node that is leaving.
   string node_id = 1;
-  // Whether to force the node to leave.
+  // force indicates whether the departure should be forced, which can be used
+  // to remove a non-responsive node.
   bool force = 2;
 }
 
-// LeaveResponse is the response to a LeaveRequest.
+// LeaveResponse is the acknowledgment for a LeaveRequest.
 message LeaveResponse {
-  // Indicates whether the leave operation was successful.
+  // success indicates whether the leave operation was processed successfully.
   bool success = 1;
-  // A message providing details about the result of the leave operation.
+  // message provides details about the result of the leave operation.
   string message = 2;
-  // List of nodes remaining in the cluster.
+  // remaining_nodes contains the list of nodes left in the cluster after the
+  // departure.
   repeated NodeInfo remaining_nodes = 3;
 }
 
-// SyncNodeStatusRequest is sent to synchronize the status of nodes.
+// SyncNodeStatusRequest is periodically sent by nodes to exchange their status
+// and view of the cluster, ensuring eventual consistency.
 message SyncNodeStatusRequest {
-  // The node sending the synchronization request.
+  // node is the information of the node initiating the synchronization.
   NodeInfo node = 1;
-  // The list of nodes known to the sender.
+  // known_nodes is the list of nodes that the sender is currently aware of.
   repeated NodeInfo known_nodes = 2;
 }
 
-// SyncNodeStatusResponse is the response to a SyncNodeStatusRequest.
+// SyncNodeStatusResponse is the response to a status synchronization request.
 message SyncNodeStatusResponse {
-  // Indicates whether the synchronization was successful.
+  // success indicates whether the synchronization was successful.
   bool success = 1;
-  // A message providing details about the result of the synchronization.
+  // message provides details about the result of the synchronization.
   string message = 2;
-  // The complete list of all nodes in the cluster.
+  // all_nodes contains the responding node's complete view of the cluster,
+  // allowing the requester to update its own list.
   repeated NodeInfo all_nodes = 3;
 }
 
-// Subscription represents a single client subscription.
+// Subscription represents a single client's subscription to a topic, which
+// needs to be shared across the cluster.
 message Subscription {
-  // ID of the client that made the subscription.
+  // client_id is the unique identifier of the MQTT client that made the
+  // subscription.
   string client_id = 1;
-  // The topic filter for the subscription.
+  // topic_filter is the MQTT topic filter (e.g., "a/b/#") for the subscription.
   string topic_filter = 2;
-  // The Quality of Service level for the subscription.
+  // qos is the Quality of Service level requested for the subscription.
   int32 qos = 3;
-  // Whether to prevent the subscriber from receiving its own messages.
+  // no_local is a boolean flag indicating that the subscriber should not
+  // receive messages published by its own client ID.
   bool no_local = 4;
-  // Whether to retain the message's published status.
+  // retain_as_published is a boolean flag indicating if the retain flag of
+  // incoming messages should be preserved when forwarding them.
   bool retain_as_published = 5;
-  // The policy for handling retained messages.
+  // retain_handling specifies the policy for sending retained messages upon
+  // subscription.
   int32 retain_handling = 6;
 }
 
-// SyncSubscriptionsRequest is sent to synchronize subscriptions between nodes.
+// SyncSubscriptionsRequest is used to share subscription information between
+// nodes.
 message SyncSubscriptionsRequest {
-  // ID of the node sending the request.
+  // node_id is the identifier of the node sending the subscription information.
   string node_id = 1;
-  // List of subscriptions to be synchronized.
+  // subscriptions is the list of subscriptions to be shared.
   repeated Subscription subscriptions = 2;
-  // Whether this is a full synchronization or an incremental update.
+  // full_sync indicates whether this request contains the entire subscription
+  // set (true) or just an incremental update (false).
   bool full_sync = 3;
 }
 
-// SyncSubscriptionsResponse is the response to a SyncSubscriptionsRequest.
+// SyncSubscriptionsResponse is the acknowledgment for a subscription sync.
 message SyncSubscriptionsResponse {
-  // Indicates whether the subscription synchronization was successful.
+  // success indicates if the subscriptions were received and processed.
   bool success = 1;
-  // A message providing details about the result.
+  // message provides details about the outcome.
   string message = 2;
-  // The number of subscriptions received.
+  // received_count is the number of subscriptions that were processed from the
+  // request.
   int32 received_count = 3;
 }
 
-// PublishForward is used to forward a published message to another node.
+// PublishForward is a message used to wrap an MQTT PUBLISH packet for
+// forwarding to another node in the cluster.
 message PublishForward {
-  // Unique ID for the message.
+  // message_id is a unique identifier for this forwarded message.
   string message_id = 1;
-  // The topic the message was published to.
+  // topic is the MQTT topic to which the message was published.
   string topic = 2;
-  // The message payload.
+  // payload is the binary content of the message.
   bytes payload = 3;
-  // The Quality of Service level of the message.
+  // qos is the Quality of Service level of the original message.
   int32 qos = 4;
-  // Whether this is a retained message.
+  // retain indicates if this was a retained message.
   bool retain = 5;
-  // Whether this is a duplicate message.
+  // dup is the duplicate flag from the original MQTT packet.
   bool dup = 6;
-  // ID of the node where the message originated.
+  // from_node is the ID of the node where the message was originally received.
   string from_node = 7;
-  // ID of the client that published the message.
+  // from_client is the ID of the MQTT client that published the message.
   string from_client = 8;
-  // Timestamp of when the message was published.
+  // timestamp is the Unix timestamp of when the message was originally
+  // published.
   int64 timestamp = 9;
-  // User-defined properties of the message.
+  // user_properties are the user-defined properties from the MQTT 5 packet.
   map<string, bytes> user_properties = 10;
 }
 
-// ForwardAck is the acknowledgment for a forwarded publish message.
+// ForwardAck is the acknowledgment sent in response to a PublishForward message.
 message ForwardAck {
-  // ID of the message being acknowledged.
+  // message_id is the ID of the message being acknowledged.
   string message_id = 1;
-  // Indicates whether the forwarding was successful.
+  // success indicates if the message was successfully received and queued for
+  // local delivery.
   bool success = 2;
-  // A message providing details about the result.
+  // message provides details about the forwarding outcome.
   string message = 3;
-  // ID of the node that acknowledged the message.
+  // to_node is the ID of the node that is acknowledging the message.
   string to_node = 4;
 }
 
-// Route represents the routing information for a topic.
+// Route represents the routing information for a single topic filter, mapping it
+// to the nodes that have subscribers for it.
 message Route {
-  // The topic filter.
+  // topic is the topic filter for which this route provides information.
   string topic = 1;
-  // List of node IDs that are responsible for this topic.
+  // node_ids is a list of unique node identifiers that have clients subscribed
+  // to this topic.
   repeated string node_ids = 2;
-  // Timestamp of the last update to this route.
+  // update_time is the Unix timestamp of the last modification to this route.
   int64 update_time = 3;
 }
 
-// BatchUpdateRoutesRequest is used to update routing information in bulk.
+// BatchUpdateRoutesRequest is used to send multiple routing updates in a single
+// gRPC call for efficiency.
 message BatchUpdateRoutesRequest {
-  // List of routes to be updated.
+  // routes is a list of routing information to be added, updated, or removed.
   repeated Route routes = 1;
-  // The type of operation ("add", "delete", "update").
+  // op_type specifies the operation to perform, such as "add", "delete", or
+  // "update".
   string op_type = 2;
-  // ID of the node that initiated the update.
+  // from_node is the ID of the node that initiated this routing update.
   string from_node = 3;
 }
 
-// BatchUpdateRoutesResponse is the response to a BatchUpdateRoutesRequest.
+// BatchUpdateRoutesResponse is the acknowledgment for a routing update request.
 message BatchUpdateRoutesResponse {
-  // Indicates whether the update was successful.
+  // success indicates if the routing update was processed successfully.
   bool success = 1;
-  // A message providing details about the result.
+  // message provides details about the outcome.
   string message = 2;
-  // The number of routes that were updated.
+  // updated_count is the number of routes that were successfully processed.
   int32 updated_count = 3;
 }
 
-// SyncConfigRequest is sent to synchronize configuration between nodes.
+// SyncConfigRequest is sent to synchronize configuration settings across the
+// cluster.
 message SyncConfigRequest {
-  // ID of the node sending the request.
+  // node_id is the identifier of the node sending the request.
   string node_id = 1;
-  // The configuration key to synchronize (or all if empty).
+  // config_key is the specific configuration key to synchronize. If empty, it
+  // implies a request for all configuration.
   string config_key = 2;
-  // Key-value pairs of the configuration to be synchronized.
+  // configs is a map of configuration key-value pairs to be synchronized.
   map<string, string> configs = 3;
 }
 
-// SyncConfigResponse is the response to a SyncConfigRequest.
+// SyncConfigResponse is the response to a configuration synchronization request.
 message SyncConfigResponse {
-  // Indicates whether the synchronization was successful.
+  // success indicates if the configuration was synchronized successfully.
   bool success = 1;
-  // A message providing details about the result.
+  // message provides details about the outcome.
   string message = 2;
-  // The full configuration (only returned for a full sync request).
+  // configs contains the full configuration map, typically returned only in
+  // response to a full sync request.
   map<string, string> configs = 3;
 }
 
-// ClusterStatsRequest is sent to request statistics from the cluster.
+// ClusterStatsRequest is sent to query performance and usage statistics from
+// nodes in the cluster.
 message ClusterStatsRequest {
-  // The specific node to get stats from (or all if empty).
+  // node_id specifies a particular node to get stats from. If empty, stats are
+  // requested from all nodes.
   string node_id = 1;
-  // The specific metrics to retrieve (or all if empty).
+  // metrics is a list of specific metric names to retrieve. If empty, all
+  // available metrics are returned.
   repeated string metrics = 2;
 }
 
-// NodeStats contains the statistics for a single node.
+// NodeStats contains a set of statistical metrics for a single node.
 message NodeStats {
-  // ID of the node these stats belong to.
+  // node_id is the identifier of the node these statistics belong to.
   string node_id = 1;
-  // Key-value pairs of the statistical metrics.
+  // metrics is a map of metric names to their integer values (e.g.,
+  // "messages.in" -> 1024).
   map<string, int64> metrics = 2;
-  // Timestamp of when the stats were collected.
+  // timestamp is the Unix timestamp of when these stats were collected.
   int64 timestamp = 3;
 }
 
-// ClusterStatsResponse is the response to a ClusterStatsRequest.
+// ClusterStatsResponse is the response to a statistics request.
 message ClusterStatsResponse {
-  // Indicates whether the request was successful.
+  // success indicates if the stats request was successfully processed.
   bool success = 1;
-  // A message providing details about the result.
+  // message provides details about the outcome.
   string message = 2;
-  // List of statistics for each node.
+  // node_stats is a list containing the statistics from each queried node.
   repeated NodeStats node_stats = 3;
-  // Timestamp of when the cluster-wide stats were collected.
+  // timestamp is the Unix timestamp of when the cluster-wide stats were
+  // aggregated.
   int64 timestamp = 4;
 }
 
-// ClusterService defines the gRPC service for cluster communication.
+// ClusterService defines the set of RPCs for managing and operating the EMQX-Go
+// cluster. All inter-node communication happens through this service.
 service ClusterService {
-  // Allows a node to join the cluster.
+  // Join allows a new node to request membership in the cluster.
   rpc Join(JoinRequest) returns (JoinResponse);
 
-  // Allows a node to leave the cluster.
+  // Leave allows a node to gracefully exit the cluster.
   rpc Leave(LeaveRequest) returns (LeaveResponse);
 
-  // Synchronizes the status of nodes in the cluster.
+  // SyncNodeStatus is used for periodic health checks and state synchronization
+  // between nodes.
   rpc SyncNodeStatus(SyncNodeStatusRequest) returns (SyncNodeStatusResponse);
 
-  // Synchronizes client subscriptions across the cluster.
+  // SyncSubscriptions shares client subscription information across the cluster
+  // to enable global message routing.
   rpc SyncSubscriptions(SyncSubscriptionsRequest) returns (SyncSubscriptionsResponse);
 
-  // Forwards a published message to another node for local delivery.
+  // ForwardPublish forwards an MQTT message from one node to another that has
+  // subscribers for the message's topic.
   rpc ForwardPublish(PublishForward) returns (ForwardAck);
 
-  // Updates routing information in bulk across the cluster.
+  // BatchUpdateRoutes efficiently updates the distributed routing table across
+  // the cluster.
   rpc BatchUpdateRoutes(BatchUpdateRoutesRequest) returns (BatchUpdateRoutesResponse);
 
-  // Synchronizes configuration between nodes.
+  // SyncConfig ensures that configuration settings are consistent across all
+  // nodes in the cluster.
   rpc SyncConfig(SyncConfigRequest) returns (SyncConfigResponse);
 
-  // Retrieves statistical information from the cluster.
+  // GetClusterStats provides a way to retrieve operational metrics from the
+  // entire cluster or specific nodes.
   rpc GetClusterStats(ClusterStatsRequest) returns (ClusterStatsResponse);
 }

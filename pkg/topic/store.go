@@ -12,7 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package topic provides an in-memory store for managing MQTT topic subscriptions.
+// Package topic provides a thread-safe, in-memory data structure for managing
+// MQTT topic subscriptions. It maps topic strings to a list of subscriber
+// mailboxes, enabling the broker to efficiently route messages to the correct
+// recipients. This implementation is simplified and does not currently support
+// MQTT topic wildcards.
 package topic
 
 import (
@@ -21,28 +25,38 @@ import (
 	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
-// Store manages topic subscriptions and message routing.
-// This is a simple in-memory implementation for the PoC.
+// Store provides a thread-safe, in-memory mapping of topic strings to lists of
+// subscriber mailboxes. It is the central component for tracking which clients
+// are subscribed to which topics.
 type Store struct {
 	subscriptions map[string][]*actor.Mailbox
 	mu            sync.RWMutex
 }
 
-// NewStore creates a new topic store.
+// NewStore creates and initializes a new, empty topic Store.
 func NewStore() *Store {
 	return &Store{
 		subscriptions: make(map[string][]*actor.Mailbox),
 	}
 }
 
-// Subscribe adds a subscriber's mailbox to a topic.
+// Subscribe adds a subscriber's mailbox to the list of subscribers for a given
+// topic. If the topic does not exist, it is created.
+//
+// - topic: The topic string to subscribe to.
+// - mailbox: The mailbox of the subscribing actor, which will receive the messages.
 func (s *Store) Subscribe(topic string, mailbox *actor.Mailbox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subscriptions[topic] = append(s.subscriptions[topic], mailbox)
 }
 
-// Unsubscribe removes a subscriber's mailbox from a topic.
+// Unsubscribe removes a subscriber's mailbox from a specific topic's
+// subscription list. If the mailbox is the last subscriber for that topic, the
+// topic entry is removed from the store.
+//
+// - topic: The topic string to unsubscribe from.
+// - mailbox: The mailbox of the unsubscribing actor.
 func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -61,8 +75,15 @@ func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 	}
 }
 
-// GetSubscribers returns all mailboxes subscribed to a topic.
-// NOTE: This is a simplified implementation that does not handle wildcards.
+// GetSubscribers returns a slice of all mailboxes subscribed to a specific
+// topic.
+//
+// Note: This is a simplified implementation for the proof-of-concept and does
+// not support MQTT wildcards (+ or #). It only performs exact string matches.
+//
+// - topic: The topic for which to retrieve subscribers.
+//
+// Returns a copy of the slice of subscriber mailboxes.
 func (s *Store) GetSubscribers(topic string) []*actor.Mailbox {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

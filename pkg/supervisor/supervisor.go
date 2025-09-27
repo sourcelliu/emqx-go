@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package supervisor provides an OTP-style supervisor for managing the
-// lifecycle of concurrent actors.
+// Package supervisor provides a fault-tolerance mechanism inspired by Erlang/OTP.
+// A supervisor is a specialized actor whose purpose is to monitor and manage the
+// lifecycle of other actors, known as its children. This promotes the "let it
+// crash" design philosophy, where failures are handled by restarting components
+// to a known-good state rather than by defensive programming within the
+// components themselves.
 package supervisor
 
 import (
@@ -26,51 +30,74 @@ import (
 	"github.com/turtacn/emqx-go/pkg/metrics"
 )
 
-// RestartStrategy defines the restart behavior for a supervised child actor.
+// RestartStrategy defines the supervisor's behavior when a child actor
+// terminates.
 type RestartStrategy int
 
 const (
-	// RestartPermanent indicates that the child actor should always be restarted.
+	// RestartPermanent means the child actor is always restarted, regardless of
+	// how it terminates (normally or with an error).
 	RestartPermanent RestartStrategy = iota
-	// RestartTransient indicates that the child actor should be restarted only if
-	// it terminates abnormally (i.e., with an error or a panic).
+	// RestartTransient means the child actor is restarted only if it terminates
+	// abnormally (i.e., returns an error or panics). It is not restarted if it
+	// terminates normally (returns nil).
 	RestartTransient
-	// RestartTemporary indicates that the child actor should never be restarted.
+	// RestartTemporary means the child actor is never restarted, regardless of
+	// how it terminates.
 	RestartTemporary
 )
 
-// Spec defines the specification for a child actor process managed by a supervisor.
+// Spec defines the configuration for a single child actor that is to be
+// managed by a supervisor. It contains the actor instance, its unique ID, and
+// its restart strategy.
 type Spec struct {
-	// ID is a unique identifier for the child actor, used for logging.
+	// ID is a unique identifier for the child actor, used for logging and
+	// metrics.
 	ID string
-	// Actor is the actor instance to be supervised.
+	// Actor is the actor instance to be supervised. It must implement the
+	// actor.Actor interface.
 	Actor actor.Actor
-	// Restart defines the restart strategy for this child.
+	// Restart defines the condition under which the supervisor should restart
+	// this child actor.
 	Restart RestartStrategy
-	// Mailbox is the mailbox to be used by the actor.
+	// Mailbox is the mailbox to be used by the actor for receiving messages.
 	Mailbox *actor.Mailbox
-	// startFunc is an optional function for starting the actor, useful for testing.
+	// startFunc is an optional function for starting the actor. It is primarily
+	// used for testing purposes to inject mock behavior.
 	startFunc func(context.Context, *actor.Mailbox) error
 }
 
-// Supervisor defines the interface for a supervisor process.
+// Supervisor defines the contract for a supervisor process. It is responsible
+// for starting, stopping, and monitoring its child actors according to their
+// defined specifications.
 type Supervisor interface {
-	// Start begins the supervision of a set of child actors.
+	// Start begins the supervision of a set of child actors defined by their
+	// specs. This is typically a non-blocking operation.
 	Start(ctx context.Context, specs []Spec) error
-	// StartChild starts and supervises a single child actor dynamically.
+	// StartChild allows for a new child actor to be started dynamically under
+	// the supervisor's management after the supervisor has already started.
 	StartChild(ctx context.Context, spec Spec)
 }
 
-// OneForOneSupervisor implements a one-for-one supervision strategy.
-// If a child process terminates, only that process is restarted.
+// OneForOneSupervisor implements a "one-for-one" supervision strategy. This
+// means that if a child actor terminates, the supervisor takes action only on
+// that specific child, without affecting its siblings.
 type OneForOneSupervisor struct{}
 
-// NewOneForOneSupervisor creates a new one-for-one supervisor.
+// NewOneForOneSupervisor creates a new supervisor that implements the
+// one-for-one restart strategy.
 func NewOneForOneSupervisor() *OneForOneSupervisor {
 	return &OneForOneSupervisor{}
 }
 
-// Start launches the initial set of supervised children. This method is non-blocking.
+// Start launches the initial set of supervised children. Each child is started
+// in its own goroutine. This method is non-blocking and returns immediately.
+//
+// - ctx: A context that governs the lifecycle of all children started by this
+//   supervisor.
+// - specs: A slice of specifications, one for each child to be started.
+//
+// Returns an error if no child specifications are provided.
 func (s *OneForOneSupervisor) Start(ctx context.Context, specs []Spec) error {
 	if len(specs) == 0 {
 		return fmt.Errorf("no child specs provided")
@@ -81,7 +108,11 @@ func (s *OneForOneSupervisor) Start(ctx context.Context, specs []Spec) error {
 	return nil
 }
 
-// StartChild launches and monitors a single new child actor in its own goroutine.
+// StartChild launches and begins monitoring a single new child actor in its own
+// dedicated goroutine.
+//
+// - ctx: The parent context for the new child.
+// - spec: The specification defining the child to be started.
 func (s *OneForOneSupervisor) StartChild(ctx context.Context, spec Spec) {
 	childCtx, cancel := context.WithCancel(ctx)
 	go s.monitorChild(childCtx, cancel, spec)

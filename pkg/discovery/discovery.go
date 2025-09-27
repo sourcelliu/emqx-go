@@ -12,19 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package discovery provides interfaces and implementations for service discovery.
+// Package discovery defines a generic interface for service discovery mechanisms,
+// allowing the cluster to find other peer nodes in various environments. This
+// is a key component for automatic clustering.
 package discovery
 
 import "context"
 
-// Peer represents a discovered peer node in the cluster.
+// Peer represents a discovered peer node in the cluster. It contains the
+// necessary information to establish a connection with the peer.
 type Peer struct {
-	ID      string
+	// ID is the unique identifier of the peer node.
+	ID string
+	// Address is the network address (e.g., "ip:port") where the peer's
+	// cluster service is listening.
 	Address string
 }
 
-// Discovery defines the interface for service discovery mechanisms.
+// Discovery is the interface that all service discovery implementations must
+// satisfy. It provides a mechanism for a node to find the addresses of its
+// peers in a dynamic environment.
 type Discovery interface {
-	// DiscoverPeers returns a list of all peer nodes in the cluster.
+	// DiscoverPeers queries the discovery service to get a list of all peer
+	// nodes that are part of the cluster.
+	//
+	// - ctx: A context for managing the discovery request, including timeouts.
+	//
+	// Returns a slice of Peer objects or an error if the discovery process fails.
 	DiscoverPeers(ctx context.Context) ([]Peer, error)
 }

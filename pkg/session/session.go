@@ -12,8 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package session provides the actor implementation for managing a single
-// client session.
+// Package session provides the actor-based implementation for managing an
+// individual MQTT client session. Each connected client is managed by its own
+// Session actor, which is responsible for handling the client's state and
+// communication, particularly for outbound messages.
 package session
 
 import (
@@ -26,21 +28,30 @@ import (
 	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
-// Publish is the message type sent to a Session actor to publish a message
-// to the connected client.
+// Publish is an internal message sent to a Session actor, instructing it to
+// deliver an MQTT PUBLISH packet to the client it manages.
 type Publish struct {
-	Topic   string
+	// Topic is the MQTT topic for the message.
+	Topic string
+	// Payload is the content of the message.
 	Payload []byte
 }
 
-// Session is an actor that manages the state for a single client connection.
-// Its primary responsibility is to write outgoing messages to the client.
+// Session is an actor that manages the state and network connection for a single
+// MQTT client. Its primary responsibility is to receive Publish messages from
+// the broker and write the corresponding MQTT PUBLISH packets to the client's
+// network connection.
 type Session struct {
+	// ID is the unique identifier for the client session, typically the MQTT
+	// Client ID.
 	ID   string
 	conn io.Writer
 }
 
-// New creates a new Session actor.
+// New creates a new Session instance.
+//
+// - id: The unique identifier for the client session.
+// - conn: The I/O writer for the client's network connection.
 func New(id string, conn io.Writer) *Session {
 	return &Session{
 		ID:   id,
@@ -48,8 +59,18 @@ func New(id string, conn io.Writer) *Session {
 	}
 }
 
-// Start is the main loop for the Session actor. It listens for messages on its
+// Start is the entry point and main loop for the Session actor. It conforms to
+// the actor.Actor interface. The method continuously waits for messages on its
 // mailbox and processes them.
+//
+// The actor terminates when the provided context is canceled or when an
+// unrecoverable error occurs, such as a failure to write to the client's
+// connection.
+//
+// - ctx: The context that controls the actor's lifecycle.
+// - mb: The actor's mailbox for receiving messages.
+//
+// Returns an error if the actor terminates unexpectedly.
 func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 	log.Printf("Session actor started for client %s", s.ID)
 	for {

@@ -12,8 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package actor provides the basic building blocks for an actor-based
-// concurrency model, inspired by Erlang/OTP.
+// Package actor provides a lightweight, Erlang/OTP-inspired actor model for
+// building concurrent and fault-tolerant systems in Go.
+//
+// The model is based on two main components:
+//   - Actor: An interface representing a concurrent process that communicates
+//     exclusively through messages.
+//   - Mailbox: A message queue for an actor that enables asynchronous
+//     communication.
+//
+// Actors are designed to be supervised, meaning their lifecycle is managed by a
+// supervisor process that can restart them if they fail. This promotes the "let
+// it crash" philosophy for building robust applications.
 package actor
 
 import "context"

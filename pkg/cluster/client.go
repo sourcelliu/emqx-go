@@ -23,14 +23,20 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Client manages the gRPC connection to another node in the cluster.
+// Client provides a gRPC client for communicating with a specific peer node in
+// the cluster. It wraps the gRPC connection and the generated gRPC client stub,
+// offering methods for cluster-related operations like joining, updating routes,
+// and forwarding messages.
 type Client struct {
+	// NodeID is the unique identifier of the local node.
 	NodeID string
 	conn   *grpc.ClientConn
 	client clusterpb.ClusterServiceClient
 }
 
-// NewClient creates a new cluster client.
+// NewClient creates a new, un-connected cluster client.
+//
+// - nodeID: The unique identifier of the local node initiating the connection.
 func NewClient(nodeID string) *Client {
 	return &Client{NodeID: nodeID}
 }
@@ -55,30 +61,52 @@ var connectFunc = func(c *Client, ctx context.Context, targetAddress string) err
 	return nil
 }
 
-// Connect establishes a gRPC connection to a peer node.
+// Connect establishes a gRPC connection to a peer node at the given address.
+// It uses a configurable connect function to allow for easier testing.
+//
+// - ctx: A context to control the connection timeout.
+// - targetAddress: The network address of the peer's gRPC server.
+//
+// Returns an error if the connection fails.
 func (c *Client) Connect(ctx context.Context, targetAddress string) error {
 	return connectFunc(c, ctx, targetAddress)
 }
 
-// Close disconnects the client.
+// Close terminates the gRPC connection to the peer node.
 func (c *Client) Close() {
 	if c.conn != nil {
 		c.conn.Close()
 	}
 }
 
-// Join sends a request to join the cluster.
+// Join sends a JoinRequest to the connected peer to become part of the cluster.
+//
+// - ctx: A context for the gRPC call.
+// - req: The join request message containing the local node's information.
+//
+// Returns the peer's response or an error.
 func (c *Client) Join(ctx context.Context, req *clusterpb.JoinRequest) (*clusterpb.JoinResponse, error) {
 	log.Printf("Sending Join request to peer")
 	return c.client.Join(ctx, req)
 }
 
-// BatchUpdateRoutes sends a batch of route updates to a peer.
+// BatchUpdateRoutes sends a set of new routing entries to the peer.
+//
+// - ctx: A context for the gRPC call.
+// - req: The request containing the routes to be added.
+//
+// Returns a response from the peer or an error.
 func (c *Client) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpdateRoutesRequest) (*clusterpb.BatchUpdateRoutesResponse, error) {
 	return c.client.BatchUpdateRoutes(ctx, req)
 }
 
-// ForwardPublish sends a publish message to a peer.
+// ForwardPublish sends a message to the peer to be published to its local
+// subscribers.
+//
+// - ctx: A context for the gRPC call.
+// - req: The message to be forwarded.
+//
+// Returns an acknowledgment from the peer or an error.
 func (c *Client) ForwardPublish(ctx context.Context, req *clusterpb.PublishForward) (*clusterpb.ForwardAck, error) {
 	return c.client.ForwardPublish(ctx, req)
 }

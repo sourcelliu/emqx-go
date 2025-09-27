@@ -21,14 +21,20 @@ import (
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
-// Server implements the gRPC ClusterService server.
+// Server implements the gRPC handlers for the ClusterService. It receives
+// requests from peer nodes and uses the cluster Manager to update the local
+// cluster state, such as adding new peers or updating routing information.
 type Server struct {
 	clusterpb.UnimplementedClusterServiceServer
+	// NodeID is the unique identifier of the local node.
 	NodeID  string
 	manager *Manager
 }
 
-// NewServer creates a new cluster server.
+// NewServer creates and initializes a new Server instance.
+//
+// - nodeID: The unique identifier of the local node.
+// - manager: A pointer to the cluster Manager that the server will interact with.
 func NewServer(nodeID string, manager *Manager) *Server {
 	return &Server{
 		NodeID:  nodeID,
@@ -36,7 +42,13 @@ func NewServer(nodeID string, manager *Manager) *Server {
 	}
 }
 
-// Join handles a request from another node to join the cluster.
+// Join is the gRPC handler for a JoinRequest from a peer. It processes the
+// request and, if successful, allows the peer to join the cluster.
+//
+// - ctx: The context for the gRPC call.
+// - req: The join request from the peer.
+//
+// Returns a response indicating success or failure.
 func (s *Server) Join(ctx context.Context, req *clusterpb.JoinRequest) (*clusterpb.JoinResponse, error) {
 	log.Printf("Received Join request from node %s at %s", req.Node.NodeId, req.Node.Address)
 	// In a real implementation, we would add the node to our peer list.
@@ -47,7 +59,14 @@ func (s *Server) Join(ctx context.Context, req *clusterpb.JoinRequest) (*cluster
 	}, nil
 }
 
-// BatchUpdateRoutes handles a request to update routing information.
+// BatchUpdateRoutes is the gRPC handler for a request to add new routing
+// entries. It iterates through the received routes and adds them to the local
+// routing table via the cluster manager.
+//
+// - ctx: The context for the gRPC call.
+// - req: The request containing the new routes.
+//
+// Returns a response indicating the number of routes updated.
 func (s *Server) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpdateRoutesRequest) (*clusterpb.BatchUpdateRoutesResponse, error) {
 	log.Printf("Received BatchUpdateRoutes request from node %s", req.FromNode)
 	for _, route := range req.Routes {
@@ -61,7 +80,14 @@ func (s *Server) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpda
 	}, nil
 }
 
-// ForwardPublish handles a request to forward a published message to local subscribers.
+// ForwardPublish is the gRPC handler for a forwarded PUBLISH message from a
+// peer. It receives the message and uses the manager's local publish callback
+// to deliver it to subscribers on the local node.
+//
+// - ctx: The context for the gRPC call.
+// - req: The forwarded message.
+//
+// Returns an acknowledgment of receipt.
 func (s *Server) ForwardPublish(ctx context.Context, req *clusterpb.PublishForward) (*clusterpb.ForwardAck, error) {
 	log.Printf("Received ForwardPublish request for topic '%s' from node %s", req.Topic, req.FromNode)
 	if s.manager.LocalPublishFunc != nil {

@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package cluster provides the functionality for creating a distributed cluster
+// of EMQX-Go nodes. It handles peer discovery, inter-node communication via
+// gRPC, and routing of messages between nodes.
 package cluster
 
 import (
@@ -23,7 +26,10 @@ import (
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
-// Manager handles the state of the cluster, including peer connections and routing tables.
+// Manager is responsible for managing the state of the cluster from the
+// perspective of a single node. It maintains connections to peer nodes, manages
+// the distributed routing table, and provides methods for broadcasting and
+// forwarding messages to other nodes in the cluster.
 type Manager struct {
 	NodeID           string
 	NodeAddress      string
@@ -33,7 +39,11 @@ type Manager struct {
 	LocalPublishFunc func(topic string, payload []byte)
 }
 
-// NewManager creates a new cluster manager.
+// NewManager creates and initializes a new Manager instance.
+//
+// - nodeID: A unique identifier for the local node.
+// - nodeAddress: The gRPC address of the local node.
+// - localPublishFunc: A callback function to publish messages to local subscribers.
 func NewManager(nodeID, nodeAddress string, localPublishFunc func(topic string, payload []byte)) *Manager {
 	return &Manager{
 		NodeID:           nodeID,
@@ -44,7 +54,13 @@ func NewManager(nodeID, nodeAddress string, localPublishFunc func(topic string, 
 	}
 }
 
-// AddPeer connects to a new peer and attempts to join the cluster.
+// AddPeer establishes a connection to a peer node and sends a join request.
+// If the connection and join are successful, the peer is added to the manager's
+// pool of connected peers.
+//
+// - ctx: A context for managing the connection and join request.
+// - peerID: The unique identifier of the peer node to connect to.
+// - address: The network address of the peer's gRPC server.
 func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 	m.mu.Lock()
 	if _, exists := m.peers[peerID]; exists {
@@ -87,7 +103,11 @@ func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 	}
 }
 
-// BroadcastRouteUpdate sends a route update to all connected peers.
+// BroadcastRouteUpdate sends information about new topic subscriptions on the
+// local node to all other connected peers in the cluster. This ensures that
+// other nodes are aware of which topics this node is subscribed to.
+//
+// - routes: A slice of Route objects, each representing a new subscription.
 func (m *Manager) BroadcastRouteUpdate(routes []*clusterpb.Route) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -107,7 +127,12 @@ func (m *Manager) BroadcastRouteUpdate(routes []*clusterpb.Route) {
 	}
 }
 
-// AddRemoteRoute is called when a route update is received from a peer.
+// AddRemoteRoute adds a new entry to the distributed routing table. It is
+// called by the gRPC server when a route update is received from a peer,
+// indicating that a client on another node has subscribed to a topic.
+//
+// - topic: The topic that has a new remote subscriber.
+// - nodeID: The ID of the node where the subscriber is located.
 func (m *Manager) AddRemoteRoute(topic, nodeID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -121,14 +146,26 @@ func (m *Manager) AddRemoteRoute(topic, nodeID string) {
 	m.remoteRoutes[topic] = append(m.remoteRoutes[topic], nodeID)
 }
 
-// GetRemoteSubscribers returns the node IDs for a given topic.
+// GetRemoteSubscribers returns a list of node IDs that have subscribers for a
+// given topic. This is used to determine which peers a message should be
+// forwarded to.
+//
+// - topic: The topic to look up in the routing table.
+//
+// Returns a slice of node IDs.
 func (m *Manager) GetRemoteSubscribers(topic string) []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.remoteRoutes[topic]
 }
 
-// ForwardPublish sends a message to a remote node.
+// ForwardPublish sends a PUBLISH message to a specific peer node. This is used
+// when a message published to the local node needs to be delivered to clients
+// connected to other nodes in the cluster.
+//
+// - topic: The topic of the message.
+// - payload: The message content.
+// - nodeID: The ID of the destination node.
 func (m *Manager) ForwardPublish(topic string, payload []byte, nodeID string) {
 	m.mu.RLock()
 	peer, ok := m.peers[nodeID]

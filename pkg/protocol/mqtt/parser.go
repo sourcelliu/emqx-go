@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Package mqtt provides low-level parsing and encoding of MQTT control packets.
+// It is designed to work directly with network I/O streams and focuses on
+// correctness and adherence to the MQTT v3.1.1 specification.
 package mqtt
 
 import (
@@ -21,19 +24,28 @@ import (
 	"io"
 )
 
-// FixedHeader represents the fixed header present in all MQTT control packets.
-// It contains the packet type, flags, and the remaining length of the packet.
+// FixedHeader represents the fixed header that is present in every MQTT control
+// packet. It consists of the packet type, type-specific flags, and the
+// remaining length of the packet.
 type FixedHeader struct {
-	// PacketType is the type of the MQTT control packet (e.g., CONNECT, PUBLISH).
+	// PacketType identifies the kind of MQTT control packet, such as CONNECT,
+	// PUBLISH, or SUBSCRIBE.
 	PacketType byte
-	// Flags are specific to each packet type.
+	// Flags are 4 bits of data specific to each packet type. For example, in a
+	// PUBLISH packet, these flags include DUP, QoS, and RETAIN.
 	Flags byte
-	// RemLength is the length of the variable header and payload.
+	// RemLength is the length of the rest of the packet, including the variable
+	// header and the payload. This value can be up to 268,435,455 bytes.
 	RemLength int
 }
 
-// DecodeFixedHeader reads and decodes the fixed header from an io.Reader.
-// It returns the decoded FixedHeader or an error if reading fails.
+// DecodeFixedHeader reads the first two bytes from an I/O stream and decodes
+// them into a FixedHeader struct. This is the first step in processing any
+// incoming MQTT packet.
+//
+// - r: The io.Reader to read from, typically a network connection.
+//
+// Returns the decoded FixedHeader or an error if the read operation fails.
 func DecodeFixedHeader(r io.Reader) (*FixedHeader, error) {
 	headerByte := make([]byte, 1)
 	if _, err := io.ReadFull(r, headerByte); err != nil {
@@ -51,8 +63,13 @@ func DecodeFixedHeader(r io.Reader) (*FixedHeader, error) {
 	return fh, nil
 }
 
-// DecodeConnect reads and decodes a CONNECT packet from an io.Reader.
-// It performs validation to ensure the packet is a valid CONNECT packet.
+// DecodeConnect reads and decodes a complete CONNECT packet from an io.Reader.
+// It performs validation to ensure the packet is a valid CONNECT packet,
+// including checking the protocol name.
+//
+// - r: The io.Reader to read from.
+//
+// Returns a decoded ConnectPacket or an error if parsing fails.
 func DecodeConnect(r io.Reader) (*ConnectPacket, error) {
 	fh, err := DecodeFixedHeader(r)
 	if err != nil {
@@ -87,7 +104,14 @@ func DecodeConnect(r io.Reader) (*ConnectPacket, error) {
 	return packet, nil
 }
 
-// DecodeSubscribe reads and decodes a SUBSCRIBE packet.
+// DecodeSubscribe parses the variable header and payload of a SUBSCRIBE packet.
+// It takes a pre-decoded FixedHeader to know how many bytes to read. It decodes
+// the Message ID and a list of topic filters and their requested QoS levels.
+//
+// - fh: The already decoded FixedHeader of the packet.
+// - r: The io.Reader to read the packet data from.
+//
+// Returns a decoded SubscribePacket or an error if reading fails.
 func DecodeSubscribe(fh *FixedHeader, r io.Reader) (*SubscribePacket, error) {
 	buf := make([]byte, fh.RemLength)
 	if _, err := io.ReadFull(r, buf); err != nil {
@@ -110,7 +134,14 @@ func DecodeSubscribe(fh *FixedHeader, r io.Reader) (*SubscribePacket, error) {
 	return packet, nil
 }
 
-// DecodePublish reads and decodes a PUBLISH packet.
+// DecodePublish parses the variable header and payload of a PUBLISH packet.
+// It takes a pre-decoded FixedHeader to determine the packet's length. It
+// decodes the topic name and extracts the message payload.
+//
+// - fh: The already decoded FixedHeader of the packet.
+// - r: The io.Reader to read the packet data from.
+//
+// Returns a decoded PublishPacket or an error if reading fails.
 func DecodePublish(fh *FixedHeader, r io.Reader) (*PublishPacket, error) {
 	buf := make([]byte, fh.RemLength)
 	if _, err := io.ReadFull(r, buf); err != nil {
@@ -127,7 +158,13 @@ func DecodePublish(fh *FixedHeader, r io.Reader) (*PublishPacket, error) {
 	return packet, nil
 }
 
-// EncodeConnack encodes a ConnackPacket and writes it to an io.Writer.
+// EncodeConnack takes a ConnackPacket, encodes it into its binary representation
+// according to the MQTT spec, and writes it to an io.Writer.
+//
+// - w: The io.Writer to write the encoded packet to.
+// - p: The ConnackPacket to encode.
+//
+// Returns an error if the write operation fails.
 func EncodeConnack(w io.Writer, p *ConnackPacket) error {
 	header := []byte{TypeCONNACK << 4, 2}
 	variableHeader := []byte{0, p.ReturnCode}
@@ -140,7 +177,14 @@ func EncodeConnack(w io.Writer, p *ConnackPacket) error {
 	return binary.Write(w, binary.BigEndian, variableHeader)
 }
 
-// EncodeSuback encodes a SubackPacket and writes it to an io.Writer.
+// EncodeSuback encodes a SubackPacket and writes it to the provided io.Writer.
+// It constructs the fixed header, variable header (Message ID), and payload
+// (a list of return codes).
+//
+// - w: The io.Writer to write the encoded packet to.
+// - p: The SubackPacket to encode.
+//
+// Returns an error if the write operation fails.
 func EncodeSuback(w io.Writer, p *SubackPacket) error {
 	header := []byte{TypeSUBACK << 4, 0}
 	remLength := 2 + len(p.ReturnCodes)
@@ -159,7 +203,15 @@ func EncodeSuback(w io.Writer, p *SubackPacket) error {
 	return nil
 }
 
-// EncodePublish encodes a PublishPacket and writes it to an io.Writer.
+// EncodePublish encodes a PublishPacket and writes it to the provided io.Writer.
+// It assembles the fixed header, variable header (topic name), and payload.
+// Note: This simplified encoder does not handle QoS > 0, so it does not encode
+// a Message ID.
+//
+// - w: The io.Writer to write the encoded packet to.
+// - p: The PublishPacket to encode.
+//
+// Returns an error if the write operation fails.
 func EncodePublish(w io.Writer, p *PublishPacket) error {
 	var vh bytes.Buffer
 	topicBytes := []byte(p.TopicName)
