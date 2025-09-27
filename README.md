@@ -1,3 +1,31 @@
+<p align="center">
+  <img src="logo.png" alt="emqx-go Logo" width="200" height="200">
+</p>
+
+<h1 align="center">emqx-go</h1>
+
+<p align="center">
+  <strong>Next-Generation Unified Identity Authentication & Access Control Platform</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/turtacn/emqx-go/actions"><img src="https://img.shields.io/github/actions/workflow/status/turtacn/emqx-go/ci.yml?branch=main" alt="Build Status"></a>
+  <a href="https://github.com/turtacn/emqx-go/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://golang.org/"><img src="https://img.shields.io/badge/Go-1.21+-blue.svg" alt="Go Version"></a>
+  <a href="https://github.com/turtacn/emqx-go/releases"><img src="https://img.shields.io/github/v/release/turtacn/emqx-go" alt="Latest Release"></a>
+  <a href="https://goreportcard.com/report/github.com/turtacn/emqx-go"><img src="https://goreportcard.com/badge/github.com/turtacn/emqx-go" alt="Go Report Card"></a>
+</p>
+
+<p align="center">
+  <a href="README-zh.md">简体中文</a> |
+  <a href="#installation">Installation</a> |
+  <a href="docs/architecture.md">Architecture</a> |
+  <a href="docs/apis.md">API Reference</a> |
+  <a href="#contributing">Contributing</a>
+</p>
+
+---
+
 # EMQX-Go: A Golang Implementation of EMQX
 
 This repository is a proof-of-concept implementation of the EMQX MQTT broker, rewritten in Go. The project aims to replicate the core functionalities of the original Erlang-based EMQX, including MQTT connection handling, message publishing and subscribing, session management, and clustering.

@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>emqx-go | 下一代MQTT平台的Go语言重构</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3E63DD',
+                        secondary: '#1FC9A9',
+                        dark: '#1D2939',
+                        light: '#F9FAFB',
+                        neutral: '#667085'
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .text-shadow {
+                text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .transition-lang {
+                transition: opacity 0.3s ease-in-out;
+            }
+        }
+    </style>
+</head>
+<body class="bg-light text-dark">
+<!-- 导航栏 -->
+<nav class="fixed w-full bg-white/90 backdrop-blur-sm shadow-sm z-50">
+    <div class="container mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <div class="text-primary text-2xl"><i class="fa fa-bolt"></i></div>
+            <span class="font-bold text-xl">emqx-go</span>
+        </div>
+        <div class="hidden md:flex items-center gap-8">
+            <a href="#overview" class="text-neutral hover:text-primary transition-colors" data-lang-key="nav-overview">概述</a>
+            <a href="#advantages" class="text-neutral hover:text-primary transition-colors" data-lang-key="nav-advantages">核心优势</a>
+            <a href="#roadmap" class="text-neutral hover:text-primary transition-colors" data-lang-key="nav-roadmap">路线图</a>
+            <a href="#capabilities" class="text-neutral hover:text-primary transition-colors" data-lang-key="nav-capabilities">当前能力</a>
+            <a href="#architecture" class="text-neutral hover:text-primary transition-colors" data-lang-key="nav-architecture">技术架构</a>
+        </div>
+        <div class="flex items-center gap-4">
+            <button id="lang-toggle" class="px-3 py-1 rounded border border-primary text-primary hover:text-primary hover:bg-primary/5 transition-colors">
+                <span class="lang-zh">English</span>
+                <span class="lang-en hidden">中文</span>
+            </button>
+            <a href="https://github.com/turtacn/emqx-go" target="_blank" class="hidden md:flex items-center gap-1 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">
+                <i class="fa fa-github"></i>
+                <span data-lang-key="github">GitHub</span>
+            </a>
+            <button class="md:hidden text-dark text-xl">
+                <i class="fa fa-bars"></i>
+            </button>
+        </div>
+    </div>
+</nav>
+
+<!-- 英雄横幅 -->
+<header class="pt-24 pb-16 md:pt-32 md:pb-24 bg-gradient-to-br from-primary/5 to-secondary/5">
+    <div class="container mx-auto px-4">
+        <div class="max-w-4xl mx-auto text-center">
+            <h1 class="text-[clamp(2rem,5vw,3.5rem)] font-bold leading-tight text-dark mb-6">
+                <span class="lang-zh">EMQX的Go语言重构</span>
+                <span class="lang-en hidden">Go Implementation of EMQX</span>
+            </h1>
+            <p class="text-[clamp(1.1rem,2vw,1.3rem)] text-neutral mb-8 max-w-3xl mx-auto">
+                <span class="lang-zh">将全球领先的MQTT平台从Erlang全量重写为Go，打造更易维护、更高性能、更易扩展的下一代物联网数据基础设施。</span>
+                <span class="lang-en hidden">A full rewrite of the world's leading MQTT platform from Erlang to Go, building a more maintainable, high-performance, and extensible next-gen IoT data infrastructure.</span>
+            </p>
+            <div class="flex flex-col md justify-center gap-4">
+                <a href="#roadmap" class="px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20">
+                    <span data-lang-key="explore-roadmap">探索路线图</span>
+                </a>
+                <a href="https://github.com/turtacn/emqx-go" target="_blank" class="px-6 py-3 border border-primary text-primary rounded-lg hover:bg-primary/5 transition-colors">
+                    <i class="fa fa-github mr-2"></i>
+                    <span data-lang-key="view-code">查看代码</span>
+                </a>
+            </div>
+        </div>
+    </div>
+</header>
+
+<!-- 项目概述 -->
+<section id="overview" class="py-16 bg-white">
+    <div class="container mx-auto px-4">
+        <div class="max-w-3xl mx-auto">
+            <h2 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold mb-8 text-center">
+                <span class="lang-zh">项目概述</span>
+                <span class="lang-en hidden">Project Overview</span>
+            </h2>
+            <div class="prose prose-lg mx-auto">
+                <p class="lang-zh">
+                    emqx-go项目旨在将EMQX——全球最具扩展性和可靠性的MQTT平台——从Erlang/OTP全量重写为Go语言。这不是渐进式替换，而是基于原项目核心功能（MQTT broker的连接、订阅、发布、会话管理和集群能力）的全新实现。
+                </p>
+                <p class="lang-en hidden">
+                    The emqx-go project aims to fully rewrite EMQX—the world's most scalable and reliable MQTT platform—from Erlang/OTP to Go. This is not an incremental replacement but a complete implementation based on the core functions of the original project (MQTT broker's connection, subscription, publishing, session management, and clustering capabilities).
+                </p>
+
+                <p class="lang-zh">
+                    项目输出包括可运行的PoC（概念验证）、完整的迁移计划、测试套件、CI/CD流程、Kubernetes部署及运维文档，最终目标是打造一个更符合现代软件工程实践、更易被开发者接受和贡献的物联网消息中间件。
+                </p>
+                <p class="lang-en hidden">
+                    Project outputs include a runnable PoC (Proof of Concept), complete migration plan, test suite, CI/CD pipeline, Kubernetes deployment and operation documents. The ultimate goal is to build an IoT message broker that better aligns with modern software engineering practices and is more accessible to developers for contribution.
+                </p>
+            </div>
+
+            <div class="mt-12 grid md:grid-cols-2 gap-6">
+                <div class="p-6 rounded-xl bg-primary/5 border border-primary/10">
+                    <div class="text-primary text-3xl mb-4"><i class="fa fa-code-fork"></i></div>
+                    <h3 class="text-xl font-semibold mb-2">
+                        <span class="lang-zh">全量重写策略</span>
+                        <span class="lang-en hidden">Full Rewrite Strategy</span>
+                    </h3>
+                    <p class="text-neutral">
+                        <span class="lang-zh">不依赖Erlang代码，基于Go原生生态从零实现EMQX核心功能，确保架构设计符合Go语言最佳实践。</span>
+                        <span class="lang-en hidden">No dependency on Erlang code; implement EMQX core functions from scratch based on Go's native ecosystem, ensuring architecture aligns with Go best practices.</span>
+                    </p>
+                </div>
+                <div class="p-6 rounded-xl bg-secondary/5 border border-secondary/10">
+                    <div class="text-secondary text-3xl mb-4"><i class="fa fa-check-square-o"></i></div>
+                    <h3 class="text-xl font-semibold mb-2">
+                        <span class="lang-zh">阶段化交付</span>
+                        <span class="lang-en hidden">Phased Delivery</span>
+                    </h3>
+                    <p class="text-neutral">
+                        <span class="lang-zh">从探索与基线分析到生产化建议，分阶段明确目标与交付物，确保每一步都可验证、可追溯。</span>
+                        <span class="lang-en hidden">From exploration and baseline analysis to production recommendations, with clear goals and deliverables in phases, ensuring each step is verifiable and traceable.</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 核心优势 -->
+<section id="advantages" class="py-16 bg-gray-50">
+    <div class="container mx-auto px-4">
+        <h2 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold mb-12 text-center">
+            <span class="lang-zh">核心优势</span>
+            <span class="lang-en hidden">Core Advantages</span>
+        </h2>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
+            <!-- 解决Erlang维护问题 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-xl mb-4">
+                    <i class="fa fa-wrench"></i>
+                </div>
+                <h3 class="text-xl font-semibold mb-3">
+                    <span class="lang-zh">解决Erlang维护挑战</span>
+                    <span class="lang-en hidden">Solve Erlang Maintenance Challenges</span>
+                </h3>
+                <ul class="space-y-2 text-neutral">
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">降低Erlang陡峭学习曲线带来的人才门槛</span>
+                        <span class="lang-en hidden">Reduce talent barriers caused by Erlang's steep learning curve</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">避免OTP框架特有的容错模型带来的维护复杂性</span>
+                        <span class="lang-en hidden">Avoid maintenance complexity from OTP's unique fault-tolerance model</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">利用Go更广泛的开发者生态与工具链</span>
+                        <span class="lang-en hidden">Leverage Go's broader developer ecosystem and toolchain</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 大模型重构价值 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-xl mb-4">
+                    <i class="fa fa-brain"></i>
+                </div>
+                <h3 class="text-xl font-semibold mb-3">
+                    <span class="lang-zh">大模型驱动的重构效率</span>
+                    <span class="lang-en hidden">LLM-Driven Refactoring Efficiency</span>
+                </h3>
+                <ul class="space-y-2 text-neutral">
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">自动化模块映射与代码生成（Erlang → Go）</span>
+                        <span class="lang-en hidden">Automated module mapping and code generation (Erlang → Go)</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">智能生成测试用例与文档，确保功能一致性</span>
+                        <span class="lang-en hidden">Intelligently generate test cases and docs to ensure functional consistency</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">结构化交付物自动生成，减少人工操作成本</span>
+                        <span class="lang-en hidden">Automated structured deliverables to reduce manual operation costs</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Go语言优势 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-xl mb-4">
+                    <i class="fa fa-golang"></i>
+                </div>
+                <h3 class="text-xl font-semibold mb-3">
+                    <span class="lang-zh">Go语言原生优势</span>
+                    <span class="lang-en hidden">Go's Native Advantages</span>
+                </h3>
+                <ul class="space-y-2 text-neutral">
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">轻量级协程模型更适合高并发IoT场景</span>
+                        <span class="lang-en hidden">Lightweight goroutine model ideal for high-concurrency IoT scenarios</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">静态类型带来的编译时错误检查与性能优化</span>
+                        <span class="lang-en hidden">Static typing for compile-time error checking and performance optimization</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">简化的部署模型（单二进制文件）与资源效率</span>
+                        <span class="lang-en hidden">Simplified deployment model (single binary) and resource efficiency</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 架构现代化 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-xl mb-4">
+                    <i class="fa fa-sitemap"></i>
+                </div>
+                <h3 class="text-xl font-semibold mb-3">
+                    <span class="lang-zh">架构现代化升级</span>
+                    <span class="lang-en hidden">Modernized Architecture</span>
+                </h3>
+                <ul class="space-y-2 text-neutral">
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">基于gRPC与etcd的分布式通信替代OTP分布机制</span>
+                        <span class="lang-en hidden">gRPC & etcd-based distributed communication replacing OTP distribution</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">分层存储设计（Postgres元数据+Redis缓存）优化性能</span>
+                        <span class="lang-en hidden">Layered storage (Postgres metadata + Redis cache) for performance</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">容器化友好设计，原生支持Kubernetes编排</span>
+                        <span class="lang-en hidden">Container-friendly design with native Kubernetes support</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 兼容性保障 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-xl mb-4">
+                    <i class="fa fa-exchange"></i>
+                </div>
+                <h3 class="text-xl font-semibold mb-3">
+                    <span class="lang-zh">全面兼容性保障</span>
+                    <span class="lang-en hidden">Comprehensive Compatibility</span>
+                </h3>
+                <ul class="space-y-2 text-neutral">
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">完整支持MQTT 5.0/3.1.1协议规范</span>
+                        <span class="lang-en hidden">Full support for MQTT 5.0/3.1.1 protocol specifications</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">数据迁移工具确保平滑过渡现有EMQX集群</span>
+                        <span class="lang-en hidden">Data migration tools for smooth transition from existing EMQX clusters</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">契约测试保障与原有客户端生态兼容</span>
+                        <span class="lang-en hidden">Contract testing ensures compatibility with existing client ecosystems</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 可观测性增强 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow">
+                <div class="w-12 h-12 bg-primary/10 rounded-lg flex items-center justify-center text-primary text-xl mb-4">
+                    <i class="fa fa-line-chart"></i>
+                </div>
+                <h3 class="text-xl font-semibold mb-3">
+                    <span class="lang-zh">增强的可观测性</span>
+                    <span class="lang-en hidden">Enhanced Observability</span>
+                </h3>
+                <ul class="space-y-2 text-neutral">
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">原生集成Prometheus/OpenTelemetry监控体系</span>
+                        <span class="lang-en hidden">Native integration with Prometheus/OpenTelemetry monitoring</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">详细的性能基准测试与混沌测试报告</span>
+                        <span class="lang-en hidden">Detailed performance benchmarks and chaos test reports</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <i class="fa fa-check text-secondary mt-1"></i>
+                        <span class="lang-zh">可视化的集群状态与消息流转追踪</span>
+                        <span class="lang-en hidden">Visual cluster status and message flow tracking</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 阶段路线图 -->
+<section id="roadmap" class="py-16 bg-white">
+    <div class="container mx-auto px-4">
+        <h2 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold mb-12 text-center">
+            <span class="lang-zh">阶段化路线图</span>
+            <span class="lang-en hidden">Phased Roadmap</span>
+        </h2>
+
+        <div class="max-w-5xl mx-auto">
+            <!-- 时间线 -->
+            <div class="relative">
+                <!-- 中心线 -->
+                <div class="absolute left-0 md:left-1/2 top-0 bottom-0 w-0.5 bg-gray-200 transform md:translate-x-[-0.25rem]"></div>
+
+                <!-- Phase 0 -->
+                <div class="relative z-10 mb-12">
+                    <div class="flex flex-col md:flex-row items-start gap-8">
+                        <div class="md:w-1/2 md:pr-12 md:text-right order-2 md:order-1">
+                            <h3 class="text-xl font-semibold mb-2 text-primary">Phase 0</h3>
+                            <h4 class="text-lg font-medium mb-3">
+                                <span class="lang-zh">探索与基线</span>
+                                <span class="lang-en hidden">Exploration & Baseline</span>
+                            </h4>
+                            <p class="text-neutral mb-3">
+                                <span class="lang-zh">静态分析EMQX源码，生成模块清单与依赖图，建立性能基线。</span>
+                                <span class="lang-en hidden">Static analysis of EMQX source code, generate module清单与依赖图, establish performance baselines.</span>
+                            </p>
+                            <div class="inline-block px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
+                                <span class="lang-zh">交付物：模块清单、基线指标、初步映射表</span>
+                                <span class="lang-en hidden">Deliverables: module list, baseline metrics, initial mapping table</span>
+                            </div>
+                        </div>
+                        <div class="absolute left-0 md:left-1/2 w-6 h-6 rounded-full bg-primary transform -translate-x-1/2 translate-y-1.5"></div>
+                        <div class="md:w-1/2 md:pl-12 order-1 md:order-2">
+                            <div class="h-1"></div> <!-- 占位 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phase 1 -->
+                <div class="relative z-10 mb-12">
+                    <div class="flex flex-col md:flex-row items-start gap-8">
+                        <div class="md:w-1/2 md:pr-12 md:text-right order-2 md:order-1">
+                            <div class="h-1"></div> <!-- 占位 -->
+                        </div>
+                        <div class="absolute left-0 md:left-1/2 w-6 h-6 rounded-full bg-primary transform -translate-x-1/2 translate-y-1.5"></div>
+                        <div class="md:w-1/2 md:pl-12 order-1 md:order-2">
+                            <h3 class="text-xl font-semibold mb-2 text-primary">Phase 1</h3>
+                            <h4 class="text-lg font-medium mb-3">
+                                <span class="lang-zh">核心框架搭建</span>
+                                <span class="lang-en hidden">Core Framework</span>
+                            </h4>
+                            <p class="text-neutral mb-3">
+                                <span class="lang-zh">实现Go版本的基础架构：Supervisor、Actor模型、配置系统与日志模块。</span>
+                                <span class="lang-en hidden">Implement Go version of core infrastructure: Supervisor, Actor model, configuration system and logging module.</span>
+                            </p>
+                            <div class="inline-block px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
+                                <span class="lang-zh">交付物：基础框架代码、单元测试、设计文档</span>
+                                <span class="lang-en hidden">Deliverables: core framework code, unit tests, design docs</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phase 2 -->
+                <div class="relative z-10 mb-12">
+                    <div class="flex flex-col md:flex-row items-start gap-8">
+                        <div class="md:w-1/2 md:pr-12 md:text-right order-2 md:order-1">
+                            <h3 class="text-xl font-semibold mb-2 text-primary">Phase 2</h3>
+                            <h4 class="text-lg font-medium mb-3">
+                                <span class="lang-zh">单机Broker功能</span>
+                                <span class="lang-en hidden">Standalone Broker</span>
+                            </h4>
+                            <p class="text-neutral mb-3">
+                                <span class="lang-zh">实现MQTT协议核心功能：连接、发布、订阅、QoS处理与会话管理。</span>
+                                <span class="lang-en hidden">Implement MQTT core functions: connection, publish, subscribe, QoS handling and session management.</span>
+                            </p>
+                            <div class="inline-block px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
+                                <span class="lang-zh">交付物：可运行的单机PoC、协议测试套件</span>
+                                <span class="lang-en hidden">Deliverables: runnable standalone PoC, protocol test suite</span>
+                            </div>
+                        </div>
+                        <div class="absolute left-0 md:left-1/2 w-6 h-6 rounded-full bg-primary transform -translate-x-1/2 translate-y-1.5"></div>
+                        <div class="md:w-1/2 md:pl-12 order-1 md:order-2">
+                            <div class="h-1"></div> <!-- 占位 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phase 3 -->
+                <div class="relative z-10 mb-12">
+                    <div class="flex flex-col md:flex-row items-start gap-8">
+                        <div class="md:w-1/2 md:pr-12 md:text-right order-2 md:order-1">
+                            <div class="h-1"></div> <!-- 占位 -->
+                        </div>
+                        <div class="absolute left-0 md:left-1/2 w-6 h-6 rounded-full bg-primary transform -translate-x-1/2 translate-y-1.5"></div>
+                        <div class="md:w-1/2 md:pl-12 order-1 md:order-2">
+                            <h3 class="text-xl font-semibold mb-2 text-primary">Phase 3</h3>
+                            <h4 class="text-lg font-medium mb-3">
+                                <span class="lang-zh">集群功能实现</span>
+                                <span class="lang-en hidden">Cluster Functionality</span>
+                            </h4>
+                            <p class="text-neutral mb-3">
+                                <span class="lang-zh">基于gRPC与etcd实现集群发现、消息路由与状态同步。</span>
+                                <span class="lang-en hidden">Implement cluster discovery, message routing and state synchronization based on gRPC and etcd.</span>
+                            </p>
+                            <div class="inline-block px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
+                                <span class="lang-zh">交付物：集群演示、同步性能测试报告</span>
+                                <span class="lang-en hidden">Deliverables: cluster demo, sync performance test report</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phase 4-5 -->
+                <div class="relative z-10 mb-12">
+                    <div class="flex flex-col md:flex-row items-start gap-8">
+                        <div class="md:w-1/2 md:pr-12 md:text-right order-2 md:order-1">
+                            <h3 class="text-xl font-semibold mb-2 text-primary">Phase 4-5</h3>
+                            <h4 class="text-lg font-medium mb-3">
+                                <span class="lang-zh">高级特性与优化</span>
+                                <span class="lang-en hidden">Advanced Features & Optimization</span>
+                            </h4>
+                            <p class="text-neutral mb-3">
+                                <span class="lang-zh">实现持久化存储、安全认证、规则引擎，并进行性能调优。</span>
+                                <span class="lang-en hidden">Implement persistent storage, security authentication, rule engine, and perform performance optimization.</span>
+                            </p>
+                            <div class="inline-block px-3 py-1 bg-primary/10 text-primary rounded-full text-sm">
+                                <span class="lang-zh">交付物：完整功能集、性能优化报告</span>
+                                <span class="lang-en hidden">Deliverables: full feature set, performance optimization report</span>
+                            </div>
+                        </div>
+                        <div class="absolute left-0 md:left-1/2 w-6 h-6 rounded-full bg-primary transform -translate-x-1/2 translate-y-1.5"></div>
+                        <div class="md:w-1/2 md:pl-12 order-1 md:order-2">
+                            <div class="h-1"></div> <!-- 占位 -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Phase 6 -->
+                <div class="relative z-10">
+                    <div class="flex flex-col md:flex-row items-start gap-8">
+                        <div class="md:w-1/2 md:pr-12 md:text-right order-2 md:order-1">
+                            <div class="h-1"></div> <!-- 占位 -->
+                        </div>
+                        <div class="absolute left-0 md:left-1/2 w-6 h-6 rounded-full bg-secondary transform -translate-x-1/2 translate-y-1.5"></div>
+                        <div class="md:w-1/2 md:pl-12 order-1 md:order-2">
+                            <h3 class="text-xl font-semibold mb-2 text-secondary">Phase 6</h3>
+                            <h4 class="text-lg font-medium mb-3">
+                                <span class="lang-zh">生产化建议与最终报告</span>
+                                <span class="lang-en hidden">Production Recommendations & Final Report</span>
+                            </h4>
+                            <p class="text-neutral mb-3">
+                                <span class="lang-zh">提供风险矩阵、SLO、切换策略、回滚计划与人员时间建议。</span>
+                                <span class="lang-en hidden">Provide risk matrix, SLO, switching strategy, rollback plan and personnel time recommendations.</span>
+                            </p>
+                            <div class="inline-block px-3 py-1 bg-secondary/10 text-secondary rounded-full text-sm">
+                                <span class="lang-zh">交付物：最终迁移计划、运维手册、部署图表</span>
+                                <span class="lang-en hidden">Deliverables: final migration plan, operation manual, deployment charts</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 技术架构 -->
+<section id="architecture" class="py-16 bg-gray-50">
+    <div class="container mx-auto px-4">
+        <h2 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold mb-12 text-center">
+            <span class="lang-zh">技术架构</span>
+            <span class="lang-en hidden">Technical Architecture</span>
+        </h2>
+
+        <div class="max-w-5xl mx-auto">
+            <!-- 模块映射表 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm mb-12">
+                <h3 class="text-xl font-semibold mb-6 text-center">
+                    <span class="lang-zh">Erlang到Go的核心模块映射</span>
+                    <span class="lang-en hidden">Core Module Mapping (Erlang → Go)</span>
+                </h3>
+                <div class="overflow-x-auto">
+                    <table class="w-full min-w-[600px]">
+                        <thead>
+                        <tr class="bg-gray-50 border-b">
+                            <th class="py-3 px-4 text-left font-semibold">
+                                <span class="lang-zh">Erlang/OTP概念</span>
+                                <span class="lang-en hidden">Erlang/OTP Concept</span>
+                            </th>
+                            <th class="py-3 px-4 text-left font-semibold">
+                                <span class="lang-zh">EMQX核心模块示例</span>
+                                <span class="lang-en hidden">EMQX Core Module Example</span>
+                            </th>
+                            <th class="py-3 px-4 text-left font-semibold">
+                                <span class="lang-zh">Go目标模块</span>
+                                <span class="lang-en hidden">Go Target Module</span>
+                            </th>
+                            <th class="py-3 px-4 text-left font-semibold">
+                                <span class="lang-zh">备注</span>
+                                <span class="lang-en hidden">Notes</span>
+                            </th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="py-3 px-4">gen_server</td>
+                            <td class="py-3 px-4">emqx_server variants</td>
+                            <td class="py-3 px-4">pkg/supervisor/actor + pkg/broker/server</td>
+                            <td class="py-3 px-4 text-neutral">
+                                <span class="lang-zh">Actor模型模拟，带消息邮箱</span>
+                                <span class="lang-en hidden">Actor simulation with mailbox</span>
+                            </td>
+                        </tr>
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="py-3 px-4">supervisor</td>
+                            <td class="py-3 px-4">OTP Supervisor trees</td>
+                            <td class="py-3 px-4">pkg/supervisor</td>
+                            <td class="py-3 px-4 text-neutral">
+                                <span class="lang-zh">实现one_for_one重启策略</span>
+                                <span class="lang-en hidden">Implement one_for_one restart policy</span>
+                            </td>
+                        </tr>
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="py-3 px-4">mnesia/ETS</td>
+                            <td class="py-3 px-4">session store, subscription tables</td>
+                            <td class="py-3 px-4">Postgres (meta), Redis (cache)</td>
+                            <td class="py-3 px-4 text-neutral">
+                                <span class="lang-zh">按访问模式拆分存储</span>
+                                <span class="lang-en hidden">Split storage by access pattern</span>
+                            </td>
+                        </tr>
+                        <tr class="border-b hover:bg-gray-50">
+                            <td class="py-3 px-4">distribution</td>
+                            <td class="py-3 px-4">node-to-node messaging</td>
+                            <td class="py-3 px-4">gRPC streaming + etcd service discovery</td>
+                            <td class="py-3 px-4 text-neutral">
+                                <span class="lang-zh">明确网络边界</span>
+                                <span class="lang-en hidden">Clear network boundaries</span>
+                            </td>
+                        </tr>
+                        <tr class="hover:bg-gray-50">
+                            <td class="py-3 px-4">hot code upgrade</td>
+                            <td class="py-3 px-4">code_change</td>
+                            <td class="py-3 px-4">rolling deploy + feature flags</td>
+                            <td class="py-3 px-4 text-neutral">
+                                <span class="lang-zh">替代方案实现</span>
+                                <span class="lang-en hidden">Alternative implementation</span>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 架构图 -->
+            <div class="bg-white p-6 rounded-xl shadow-sm">
+                <h3 class="text-xl font-semibold mb-6 text-center">
+                    <span class="lang-zh">系统架构概览</span>
+                    <span class="lang-en hidden">System Architecture Overview</span>
+                </h3>
+                <div class="aspect-video bg-gray-50 rounded-lg flex items-center justify-center overflow-hidden">
+                    <!-- 简化的架构图 -->
+                    <div class="w-full h-full p-8 flex flex-col">
+                        <!-- 客户端层 -->
+                        <div class="flex-1 border-b border-gray-200 flex items-center justify-center">
+                            <div class="text-center">
+                                <div class="text-lg font-medium mb-2">
+                                    <span class="lang-zh">客户端层</span>
+                                    <span class="lang-en hidden">Client Layer</span>
+                                </div>
+                                <div class="text-neutral text-sm">
+                                    <span class="lang-zh">MQTT 5.0/3.1.1, WebSocket, QUIC</span>
+                                    <span class="lang-en hidden">MQTT 5.0/3.1.1, WebSocket, QUIC</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 协议层 -->
+                        <div class="flex-2 border-b border-gray-200 flex items-center justify-center">
+                            <div class="text-center">
+                                <div class="text-lg font-medium mb-2">
+                                    <span class="lang-zh">协议处理层</span>
+                                    <span class="lang-en hidden">Protocol Layer</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-4 mt-2">
+                                    <div class="px-3 py-1 bg-primary/10 text-primary rounded">
+                                        <span class="lang-zh">连接管理</span>
+                                        <span class="lang-en hidden">Conn Mgmt</span>
+                                    </div>
+                                    <div class="px-3 py-1 bg-primary/10 text-primary rounded">
+                                        <span class="lang-zh">消息路由</span>
+                                        <span class="lang-en hidden">Msg Routing</span>
+                                    </div>
+                                    <div class="px-3 py-1 bg-primary/10 text-primary rounded">
+                                        <span class="lang-zh">QoS处理</span>
+                                        <span class="lang-en hidden">QoS Handling</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 核心层 -->
+                        <div class="flex-3 border-b border-gray-200 flex items-center justify-center">
+                            <div class="text-center">
+                                <div class="text-lg font-medium mb-2">
+                                    <span class="lang-zh">核心服务层</span>
+                                    <span class="lang-en hidden">Core Service Layer</span>
+                                </div>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2">
+                                    <div class="px-3 py-1 bg-secondary/10 text-secondary rounded">
+                                        <span class="lang-zh">会话管理</span>
+                                        <span class="lang-en hidden">Session</span>
+                                    </div>
+                                    <div class="px-3 py-1 bg-secondary/10 text-secondary rounded">
+                                        <span class="lang-zh">订阅存储</span>
+                                        <span class="lang-en hidden">Subscription</span>
+                                    </div>
+                                    <div class="px-3 py-1 bg-secondary/10 text-secondary rounded">
+                                        <span class="lang-zh">集群同步</span>
+                                        <span class="lang-en hidden">Cluster Sync</span>
+                                    </div>
+                                    <div class="px-3 py-1 bg-secondary/10 text-secondary rounded">
+                                        <span class="lang-zh">规则引擎</span>
+                                        <span class="lang-en hidden">Rule Engine</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 存储层 -->
+                        <div class="flex-2 border-b border-gray-200 flex items-center justify-center">
+                            <div class="text-center">
+                                <div class="text-lg font-medium mb-2">
+                                    <span class="lang-zh">存储层</span>
+                                    <span class="lang-en hidden">Storage Layer</span>
+                                </div>
+                                <div class="grid grid-cols-3 gap-4 mt-2">
+                                    <div class="px-3 py-1 bg-gray-100 text-gray-700 rounded">
+                                        <span class="lang-zh">Postgres</span>
+                                        <span class="lang-en hidden">Postgres</span>
+                                    </div>
+                                    <div class="px-3 py-1 bg-gray-100 text-gray-700 rounded">
+                                        <span class="lang-zh">Redis</span>
+                                        <span class="lang-en hidden">Redis</span>
+                                    </div>
+                                    <div class="px-3 py-1 bg-gray-100 text-gray-700 rounded">
+                                        <span class="lang-zh">本地存储</span>
+                                        <span class="lang-en hidden">Local Storage</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 基础设施层 -->
+                        <div class="flex-1 flex items-center justify-center">
+                            <div class="text-center">
+                                <div class="text-lg font-medium mb-2">
+                                    <span class="lang-zh">基础设施层</span>
+                                    <span class="lang-en hidden">Infrastructure Layer</span>
+                                </div>
+                                <div class="text-neutral text-sm">
+                                    <span class="lang-zh">etcd (服务发现), gRPC (集群通信), Prometheus (监控)</span>
+                                    <span class="lang-en hidden">etcd (Service Discovery), gRPC (Cluster Comm), Prometheus (Monitoring)</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 当前能力 -->
+<section id="capabilities" class="py-16 bg-white">
+    <div class="container mx-auto px-4">
+        <h2 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold mb-12 text-center">
+            <span class="lang-zh">当前具备的卓越能力</span>
+            <span class="lang-en hidden">Current Capabilities</span>
+        </h2>
+
+        <div class="max-w-5xl mx-auto grid md:grid-cols-2 gap-8">
+            <div class="bg-gray-50 p-6 rounded-xl">
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <i class="fa fa-code"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold">
+                        <span class="lang-zh">规范的开发流程</span>
+                        <span class="lang-en hidden">Standardized Dev Process</span>
+                    </h3>
+                </div>
+                <ul class="space-y-3 text-neutral">
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">遵循gofmt与golangci-lint代码规范，确保代码质量</span>
+                        <span class="lang-en hidden">Adheres to gofmt and golangci-lint standards to ensure code quality</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">严格的阶段划分与PR流程，每个阶段有明确验收标准</span>
+                        <span class="lang-en hidden">Strict phase division and PR process with clear acceptance criteria</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">完整的文档体系，包括设计文档、运维手册与回滚手册</span>
+                        <span class="lang-en hidden">Comprehensive documentation including design docs, operation manuals and rollback guides</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="bg-gray-50 p-6 rounded-xl">
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <i class="fa fa-cogs"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold">
+                        <span class="lang-zh">自动化工程实践</span>
+                        <span class="lang-en hidden">Automated Engineering</span>
+                    </h3>
+                </div>
+                <ul class="space-y-3 text-neutral">
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">CI流水线自动运行lint、测试与契约验证</span>
+                        <span class="lang-en hidden">CI pipeline automatically runs lint, tests and contract verification</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">自动化生成测试报告（JSON+HTML格式）</span>
+                        <span class="lang-en hidden">Automatically generates test reports (JSON+HTML format)</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">Helm Charts支持Kubernetes一键部署PoC</span>
+                        <span class="lang-en hidden">Helm Charts for Kubernetes one-click PoC deployment</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="bg-gray-50 p-6 rounded-xl">
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <i class="fa fa-shield"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold">
+                        <span class="lang-zh">风险管控体系</span>
+                        <span class="lang-en hidden">Risk Management</span>
+                    </h3>
+                </div>
+                <ul class="space-y-3 text-neutral">
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">预先识别风险矩阵（如Go GC延迟、消息顺序性）</span>
+                        <span class="lang-en hidden">Pre-identified risk matrix (e.g., Go GC latency, message ordering)</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">每个PR包含影响分析与回滚步骤</span>
+                        <span class="lang-en hidden">Each PR includes impact analysis and rollback steps</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">双写策略与校验工具保障数据一致性</span>
+                        <span class="lang-en hidden">Dual-write strategy and verification tools ensure data consistency</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div class="bg-gray-50 p-6 rounded-xl">
+                <div class="flex items-center gap-4 mb-4">
+                    <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                        <i class="fa fa-rocket"></i>
+                    </div>
+                    <h3 class="text-xl font-semibold">
+                        <span class="lang-zh">可扩展的架构设计</span>
+                        <span class="lang-en hidden">Extensible Architecture</span>
+                    </h3>
+                </div>
+                <ul class="space-y-3 text-neutral">
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">模块化设计支持功能按需扩展</span>
+                        <span class="lang-en hidden">Modular design supports on-demand feature expansion</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">基于gRPC的集群通信便于跨语言集成</span>
+                        <span class="lang-en hidden">gRPC-based cluster communication for cross-language integration</span>
+                    </li>
+                    <li class="flex items-start gap-3">
+                        <i class="fa fa-angle-right text-primary mt-1"></i>
+                        <span class="lang-zh">分层存储设计适配不同访问模式需求</span>
+                        <span class="lang-en hidden">Layered storage design adapts to different access patterns</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- 结语 -->
+<section class="py-16 bg-gradient-to-br from-primary/5 to-secondary/5">
+    <div class="container mx-auto px-4 text-center">
+        <h2 class="text-[clamp(1.5rem,3vw,2.5rem)] font-bold mb-6">
+            <span class="lang-zh">开启物联网消息中间件的新篇章</span>
+            <span class="lang-en hidden">A New Chapter in IoT Messaging Middleware</span>
+        </h2>
+        <p class="text-lg text-neutral max-w-2xl mx-auto mb-8">
+            <span class="lang-zh">emqx-go项目不仅是一次技术栈的迁移，更是对物联网消息处理范式的革新。通过Go语言的现代化特性与工程化实践，我们致力于打造一个更易使用、更易扩展、更易维护的下一代MQTT平台。</span>
+            <span class="lang-en hidden">The emqx-go project is not just a technology stack migration, but a revolution in IoT message processing paradigms. Leveraging Go's modern features and engineering practices, we aim to build a more usable, extensible, and maintainable next-gen MQTT platform.</span>
+        </p>
+        <a href="https://github.com/turtacn/emqx-go" target="_blank" class="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors shadow-lg shadow-primary/20">
+            <i class="fa fa-github"></i>
+            <span data-lang-key="join-project">加入项目</span>
+        </a>
+    </div>
+</section>
+
+<!-- 页脚 -->
+<footer class="bg-dark text-white py-12">
+    <div class="container mx-auto px-4">
+        <div class="flex flex-col md:flex-row justify-between items-center">
+            <div class="mb-6 md:mb-0">
+                <div class="flex items-center gap-2 mb-2">
+                    <div class="text-secondary text-2xl"><i class="fa fa-bolt"></i></div>
+                    <span class="font-bold text-xl">emqx-go</span>
+                </div>
+                <p class="text-gray-400 text-sm max-w-xs">
+                    <span class="lang-zh">Go语言实现的EMQX，下一代物联网消息平台</span>
+                    <span class="lang-en hidden">Go implementation of EMQX, the next-gen IoT messaging platform</span>
+                </p>
+            </div>
+            <div class="flex gap-6">
+                <a href="https://github.com/turtacn/emqx-go" target="_blank" class="text-gray-400 hover:text-white transition-colors">
+                    <i class="fa fa-github text-xl"></i>
+                </a>
+                <a href="https://www.emqx.com" target="_blank" class="text-gray-400 hover:text-white transition-colors">
+                    <i class="fa fa-globe text-xl"></i>
+                </a>
+                <a href="#" class="text-gray-400 hover:text-white transition-colors">
+                    <i class="fa fa-twitter text-xl"></i>
+                </a>
+            </div>
+        </div>
+        <div class="border-t border-gray-800 mt-8 pt-8 text-center text-gray-400 text-sm">
+            <span class="lang-zh">© 2025 emqx-go 项目. 基于Apache 2.0许可证.</span>
+            <span class="lang-en hidden">© 2025 emqx-go Project. Licensed under Apache 2.0.</span>
+        </div>
+    </div>
+</footer>
+
+<script>
+    // 语言切换功能
+    document.getElementById('lang-toggle').addEventListener('click', function() {
+        const zhElements = document.querySelectorAll('.lang-zh');
+        const enElements = document.querySelectorAll('.lang-en');
+
+        zhElements.forEach(el => el.classList.toggle('hidden'));
+        enElements.forEach(el => el.classList.toggle('hidden'));
+    });
+
+    // 平滑滚动
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+        anchor.addEventListener('click', function (e) {
+            e.preventDefault();
+            document.querySelector(this.getAttribute('href')).scrollIntoView({
+                behavior: 'smooth'
+            });
+        });
+    });
+
+    // 导航栏滚动效果
+    window.addEventListener('scroll', function() {
+        const nav = document.querySelector('nav');
+        if (window.scrollY > 50) {
+            nav.classList.add('py-2', 'shadow');
+            nav.classList.remove('py-3');
+        } else {
+            nav.classList.add('py-3');
+            nav.classList.remove('py-2', 'shadow');
+        }
+    });
+</script>
+</body>
+</html>
