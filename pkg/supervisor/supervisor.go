@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/metrics"
 )
 
 // RestartStrategy defines the restart behavior for a supervised child actor.
@@ -131,6 +132,8 @@ func (s *OneForOneSupervisor) monitorChild(ctx context.Context, cancel context.C
 			return
 		}
 
+		// Increment the restart metric for this specific actor.
+		metrics.SupervisorRestartsTotal.WithLabelValues(spec.ID).Inc()
 		log.Printf("Restarting actor %s...", spec.ID)
 		// A small delay to prevent rapid-fire restarts in case of persistent issues.
 		time.Sleep(1 * time.Second)

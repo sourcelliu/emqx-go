@@ -28,6 +28,7 @@ import (
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/turtacn/emqx-go/pkg/actor"
 	"github.com/turtacn/emqx-go/pkg/cluster"
+	"github.com/turtacn/emqx-go/pkg/metrics"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 	"github.com/turtacn/emqx-go/pkg/session"
 	"github.com/turtacn/emqx-go/pkg/storage"
@@ -93,6 +94,7 @@ func (b *Broker) StartServer(ctx context.Context, addr string) error {
 
 // handleConnection manages a single client connection.
 func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
+	metrics.ConnectionsTotal.Inc()
 	defer conn.Close()
 	log.Printf("Accepted connection from %s", conn.RemoteAddr())
 

@@ -29,12 +29,14 @@ import (
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/discovery"
+	"github.com/turtacn/emqx-go/pkg/metrics"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 	"google.golang.org/grpc"
 )
 
 const (
-	grpcPort = ":8081"
+	grpcPort    = ":8081"
+	metricsPort = ":8082"
 )
 
 func main() {
@@ -82,6 +84,9 @@ func main() {
 		}
 	}()
 	defer grpcServer.Stop()
+
+	// --- Start Metrics Server ---
+	go metrics.Serve(metricsPort)
 
 	// --- Start Discovery and Peer Connection ---
 	go startDiscovery(ctx, clusterMgr)
