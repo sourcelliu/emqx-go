@@ -21,27 +21,25 @@ import (
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
-// Server implements the gRPC ClusterService server. It is responsible for
-// handling incoming RPCs from other nodes in the cluster. This includes
-// requests to join or leave the cluster, as well as requests to synchronize
-// state such as routes and configurations.
+// Server implements the gRPC ClusterService server.
 type Server struct {
 	clusterpb.UnimplementedClusterServiceServer
-	// NodeID is the unique identifier of the node this server is running on.
-	NodeID string
+	NodeID  string
+	manager *Manager
 }
 
-// NewServer creates and returns a new instance of the cluster Server.
-func NewServer(nodeID string) *Server {
-	return &Server{NodeID: nodeID}
+// NewServer creates a new cluster server.
+func NewServer(nodeID string, manager *Manager) *Server {
+	return &Server{
+		NodeID:  nodeID,
+		manager: manager,
+	}
 }
 
 // Join handles a request from another node to join the cluster.
-// In a real implementation, this would involve authenticating the new node and
-// adding it to the list of cluster members.
 func (s *Server) Join(ctx context.Context, req *clusterpb.JoinRequest) (*clusterpb.JoinResponse, error) {
 	log.Printf("Received Join request from node %s at %s", req.Node.NodeId, req.Node.Address)
-	// In a real implementation, we would return the actual list of nodes.
+	// In a real implementation, we would add the node to our peer list.
 	return &clusterpb.JoinResponse{
 		Success:      true,
 		Message:      "Welcome to the cluster!",
@@ -49,46 +47,25 @@ func (s *Server) Join(ctx context.Context, req *clusterpb.JoinRequest) (*cluster
 	}, nil
 }
 
-// Leave handles a request from another node to leave the cluster.
-func (s *Server) Leave(ctx context.Context, req *clusterpb.LeaveRequest) (*clusterpb.LeaveResponse, error) {
-	log.Printf("Received Leave request from node %s", req.NodeId)
-	return &clusterpb.LeaveResponse{Success: true}, nil
-}
-
-// SyncNodeStatus handles a request to synchronize node status.
-func (s *Server) SyncNodeStatus(ctx context.Context, req *clusterpb.SyncNodeStatusRequest) (*clusterpb.SyncNodeStatusResponse, error) {
-	log.Printf("Received SyncNodeStatus request from node %s", req.Node.NodeId)
-	return &clusterpb.SyncNodeStatusResponse{Success: true}, nil
-}
-
-// SyncSubscriptions handles a request to synchronize subscription information.
-func (s *Server) SyncSubscriptions(ctx context.Context, req *clusterpb.SyncSubscriptionsRequest) (*clusterpb.SyncSubscriptionsResponse, error) {
-	log.Printf("Received SyncSubscriptions request from node %s with %d subscriptions", req.NodeId, len(req.Subscriptions))
-	return &clusterpb.SyncSubscriptionsResponse{Success: true, ReceivedCount: int32(len(req.Subscriptions))}, nil
+// BatchUpdateRoutes handles a request to update routing information.
+func (s *Server) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpdateRoutesRequest) (*clusterpb.BatchUpdateRoutesResponse, error) {
+	log.Printf("Received BatchUpdateRoutes request from node %s", req.FromNode)
+	for _, route := range req.Routes {
+		for _, nodeID := range route.NodeIds {
+			s.manager.AddRemoteRoute(route.Topic, nodeID)
+		}
+	}
+	return &clusterpb.BatchUpdateRoutesResponse{
+		Success:      true,
+		UpdatedCount: int32(len(req.Routes)),
+	}, nil
 }
 
 // ForwardPublish handles a request to forward a published message to local subscribers.
 func (s *Server) ForwardPublish(ctx context.Context, req *clusterpb.PublishForward) (*clusterpb.ForwardAck, error) {
-	log.Printf("Received ForwardPublish request for topic %s from node %s", req.Topic, req.FromNode)
-	// In a real implementation, this would trigger a local publish to the topic.
-	return &clusterpb.ForwardAck{MessageId: req.MessageId, Success: true}, nil
-}
-
-// BatchUpdateRoutes handles a request to update routing information.
-func (s *Server) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpdateRoutesRequest) (*clusterpb.BatchUpdateRoutesResponse, error) {
-	log.Printf("Received BatchUpdateRoutes request from node %s", req.FromNode)
-	// Here, we would update the local routing table based on the request.
-	return &clusterpb.BatchUpdateRoutesResponse{Success: true, UpdatedCount: int32(len(req.Routes))}, nil
-}
-
-// SyncConfig handles a request to synchronize configuration.
-func (s *Server) SyncConfig(ctx context.Context, req *clusterpb.SyncConfigRequest) (*clusterpb.SyncConfigResponse, error) {
-	log.Printf("Received SyncConfig request from node %s", req.NodeId)
-	return &clusterpb.SyncConfigResponse{Success: true}, nil
-}
-
-// GetClusterStats handles a request for cluster statistics.
-func (s *Server) GetClusterStats(ctx context.Context, req *clusterpb.ClusterStatsRequest) (*clusterpb.ClusterStatsResponse, error) {
-	log.Printf("Received GetClusterStats request from node %s", req.NodeId)
-	return &clusterpb.ClusterStatsResponse{Success: true}, nil
+	log.Printf("Received ForwardPublish request for topic '%s' from node %s", req.Topic, req.FromNode)
+	if s.manager.LocalPublishFunc != nil {
+		s.manager.LocalPublishFunc(req.Topic, req.Payload)
+	}
+	return &clusterpb.ForwardAck{Success: true}, nil
 }

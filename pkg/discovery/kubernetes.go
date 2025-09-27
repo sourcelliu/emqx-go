@@ -24,9 +24,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// KubeDiscovery implements the Discovery interface for discovering peer nodes
-// in a Kubernetes environment. It uses the Kubernetes API to find the endpoints
-// of a service, which correspond to the pods running the EMQX-Go application.
+// KubeDiscovery implements the Discovery interface using the Kubernetes API.
 type KubeDiscovery struct {
 	clientset *kubernetes.Clientset
 	namespace string
@@ -35,12 +33,7 @@ type KubeDiscovery struct {
 }
 
 // NewKubeDiscovery creates a new Kubernetes discovery client.
-// It is intended to be run from within a Kubernetes pod, as it uses the
-// in-cluster configuration to create a Kubernetes clientset.
-//
-// namespace is the Kubernetes namespace where the service is located.
-// service is the name of the Kubernetes service to discover endpoints for.
-// portName is the name of the port in the service definition to use for the peer address.
+// It attempts to configure itself from within a pod using a service account.
 func NewKubeDiscovery(namespace, service, portName string) (*KubeDiscovery, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
@@ -60,9 +53,8 @@ func NewKubeDiscovery(namespace, service, portName string) (*KubeDiscovery, erro
 	}, nil
 }
 
-// DiscoverPeers queries the Kubernetes API for the endpoints of the configured
-// service and returns a list of discovered peers. It excludes the current pod
-// from the list of peers.
+// DiscoverPeers finds other pods belonging to the same service by querying
+// the Kubernetes Endpoints API.
 func (k *KubeDiscovery) DiscoverPeers(ctx context.Context) ([]Peer, error) {
 	endpoints, err := k.clientset.CoreV1().Endpoints(k.namespace).Get(ctx, k.service, metav1.GetOptions{})
 	if err != nil {

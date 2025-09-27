@@ -13,27 +13,18 @@
 // limitations under the License.
 
 // package discovery provides interfaces and implementations for service discovery.
-// This allows the EMQX-Go cluster to dynamically find and connect to peer nodes
-// in various environments, such as Kubernetes.
 package discovery
 
 import "context"
 
 // Peer represents a discovered peer node in the cluster.
-// It contains the necessary information to establish a connection to the peer.
 type Peer struct {
-	// ID is the unique identifier of the peer node.
-	ID string
-	// Address is the network address of the peer node, typically in "host:port"
-	// format.
+	ID      string
 	Address string
 }
 
 // Discovery defines the interface for service discovery mechanisms.
-// Implementations of this interface are responsible for finding peer nodes
-// in a specific environment.
 type Discovery interface {
-	// DiscoverPeers queries the discovery service and returns a list of all
-	// discovered peer nodes in the cluster.
+	// DiscoverPeers returns a list of all peer nodes in the cluster.
 	DiscoverPeers(ctx context.Context) ([]Peer, error)
 }

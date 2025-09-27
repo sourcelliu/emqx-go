@@ -12,9 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// package cluster provides the functionality for creating a cluster of EMQX-Go
-// nodes. It handles peer discovery, state synchronization, and message routing
-// between nodes using gRPC.
 package cluster
 
 import (
@@ -26,34 +23,28 @@ import (
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 )
 
-// Manager is the central component for managing cluster-related activities.
-// It maintains the state of the cluster, including the list of connected peers
-// and the routing table for message forwarding. It is responsible for initiating
-// connections to other nodes and broadcasting state changes.
+// Manager handles the state of the cluster, including peer connections and routing tables.
 type Manager struct {
-	// NodeID is the unique identifier for this node in the cluster.
-	NodeID string
-	// NodeAddress is the gRPC address that this node listens on for cluster
-	// communication.
-	NodeAddress string
-	peers        map[string]*Client
-	remoteRoutes map[string][]string // Map of Topic to list of NodeIDs
-	mu           sync.RWMutex
+	NodeID           string
+	NodeAddress      string
+	peers            map[string]*Client
+	remoteRoutes     map[string][]string // Map of Topic to list of NodeIDs
+	mu               sync.RWMutex
+	LocalPublishFunc func(topic string, payload []byte)
 }
 
-// NewManager creates and returns a new instance of the cluster Manager.
-func NewManager(nodeID, nodeAddress string) *Manager {
+// NewManager creates a new cluster manager.
+func NewManager(nodeID, nodeAddress string, localPublishFunc func(topic string, payload []byte)) *Manager {
 	return &Manager{
-		NodeID:       nodeID,
-		NodeAddress:  nodeAddress,
-		peers:        make(map[string]*Client),
-		remoteRoutes: make(map[string][]string),
+		NodeID:           nodeID,
+		NodeAddress:      nodeAddress,
+		peers:            make(map[string]*Client),
+		remoteRoutes:     make(map[string][]string),
+		LocalPublishFunc: localPublishFunc,
 	}
 }
 
-// AddPeer establishes a connection to a new peer and sends a request to join
-// the cluster. If the connection and join request are successful, the peer is
-// added to the manager's list of active peers.
+// AddPeer connects to a new peer and attempts to join the cluster.
 func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 	m.mu.Lock()
 	if _, exists := m.peers[peerID]; exists {
@@ -96,8 +87,7 @@ func (m *Manager) AddPeer(ctx context.Context, peerID, address string) {
 	}
 }
 
-// BroadcastRouteUpdate sends a route update to all connected peers in the cluster.
-// This is used to inform other nodes about new subscriptions on this node.
+// BroadcastRouteUpdate sends a route update to all connected peers.
 func (m *Manager) BroadcastRouteUpdate(routes []*clusterpb.Route) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -117,19 +107,47 @@ func (m *Manager) BroadcastRouteUpdate(routes []*clusterpb.Route) {
 	}
 }
 
-// AddRemoteRoute adds a route for a topic to a remote node. This method is
-// typically called by the gRPC server when it receives a route update from a peer.
+// AddRemoteRoute is called when a route update is received from a peer.
 func (m *Manager) AddRemoteRoute(topic, nodeID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	log.Printf("Adding remote route: Topic=%s, Node=%s", topic, nodeID)
+	// Avoid duplicate entries
+	for _, existingNodeID := range m.remoteRoutes[topic] {
+		if existingNodeID == nodeID {
+			return
+		}
+	}
 	m.remoteRoutes[topic] = append(m.remoteRoutes[topic], nodeID)
 }
 
-// GetRemoteSubscribers returns a list of node IDs that have subscribers for a
-// given topic. This is used to determine which nodes to forward a message to.
+// GetRemoteSubscribers returns the node IDs for a given topic.
 func (m *Manager) GetRemoteSubscribers(topic string) []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.remoteRoutes[topic]
+}
+
+// ForwardPublish sends a message to a remote node.
+func (m *Manager) ForwardPublish(topic string, payload []byte, nodeID string) {
+	m.mu.RLock()
+	peer, ok := m.peers[nodeID]
+	m.mu.RUnlock()
+
+	if !ok {
+		log.Printf("Cannot forward publish: no peer client for node %s", nodeID)
+		return
+	}
+
+	req := &clusterpb.PublishForward{
+		Topic:    topic,
+		Payload:  payload,
+		FromNode: m.NodeID,
+	}
+
+	go func() {
+		if _, err := peer.ForwardPublish(context.Background(), req); err != nil {
+			log.Printf("Failed to forward publish to node %s: %v", nodeID, err)
+		}
+	}()
 }

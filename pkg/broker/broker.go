@@ -27,6 +27,8 @@ import (
 
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/cluster"
+	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 	"github.com/turtacn/emqx-go/pkg/session"
 	"github.com/turtacn/emqx-go/pkg/storage"
 	"github.com/turtacn/emqx-go/pkg/supervisor"
@@ -38,16 +40,25 @@ type Broker struct {
 	sup      supervisor.Supervisor
 	sessions storage.Store
 	topics   *topic.Store
+	cluster  *cluster.Manager
+	nodeID   string
 	mu       sync.RWMutex
 }
 
 // New creates a new Broker.
-func New() *Broker {
-	return &Broker{
+func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
+	b := &Broker{
 		sup:      supervisor.NewOneForOneSupervisor(),
 		sessions: storage.NewMemStore(),
 		topics:   topic.NewStore(),
+		cluster:  clusterMgr,
+		nodeID:   nodeID,
 	}
+	if clusterMgr != nil {
+		// Set the callback for the cluster manager to publish locally
+		clusterMgr.LocalPublishFunc = b.RouteToLocalSubscribers
+	}
+	return b
 }
 
 // StartServer begins listening for incoming TCP connections on the specified address.
@@ -119,10 +130,20 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Println("SUBSCRIBE received before CONNECT")
 				return
 			}
+			var newRoutes []*clusterpb.Route
 			for _, sub := range pk.Filters {
 				b.topics.Subscribe(sub.Filter, sessionMailbox)
 				log.Printf("Client %s subscribed to %s", clientID, sub.Filter)
+				newRoutes = append(newRoutes, &clusterpb.Route{
+					Topic:   sub.Filter,
+					NodeIds: []string{b.nodeID},
+				})
 			}
+			// Announce these new routes to peers
+			if b.cluster != nil {
+				b.cluster.BroadcastRouteUpdate(newRoutes)
+			}
+
 			resp := packets.Packet{
 				FixedHeader: packets.FixedHeader{Type: packets.Suback},
 				PacketID:    pk.PacketID,
@@ -186,11 +207,31 @@ func (b *Broker) unregisterSession(clientID string) {
 	b.sessions.Delete(clientID)
 }
 
-// routePublish sends a message to all local subscribers of a topic.
+// routePublish sends a message to all local and remote subscribers of a topic.
 func (b *Broker) routePublish(topicName string, payload []byte) {
+	// Route to local subscribers
+	b.RouteToLocalSubscribers(topicName, payload)
+
+	// Route to remote subscribers if clustering is enabled
+	if b.cluster != nil {
+		remoteSubscribers := b.cluster.GetRemoteSubscribers(topicName)
+		for _, nodeID := range remoteSubscribers {
+			// Avoid forwarding to self
+			if nodeID == b.nodeID {
+				continue
+			}
+			log.Printf("Forwarding message for topic '%s' to remote node %s", topicName, nodeID)
+			b.cluster.ForwardPublish(topicName, payload, nodeID)
+		}
+	}
+}
+
+// RouteToLocalSubscribers sends a message to all local subscribers of a topic.
+// This function is also used as a callback by the cluster manager for forwarded messages.
+func (b *Broker) RouteToLocalSubscribers(topicName string, payload []byte) {
 	subscribers := b.topics.GetSubscribers(topicName)
 	if len(subscribers) > 0 {
-		log.Printf("Routing message on topic '%s' to %d subscribers", topicName, len(subscribers))
+		log.Printf("Routing message on topic '%s' to %d local subscribers", topicName, len(subscribers))
 	}
 	msg := session.Publish{
 		Topic:   topicName,

@@ -1,10 +1,17 @@
+# k8s/statefulset.yaml
+# This StatefulSet manages the deployment and scaling of a set of emqx-go pods.
+# It provides guarantees about the ordering and uniqueness of these pods.
+
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: emqx-go
 spec:
+  # The serviceName must match the name of the headless service.
+  # This is crucial for providing stable network identifiers to the pods.
   serviceName: "emqx-go-headless"
-  replicas: 3
+  # We start with 2 replicas to test clustering.
+  replicas: 2
   selector:
     matchLabels:
       app: emqx-go
@@ -13,34 +20,21 @@ spec:
       labels:
         app: emqx-go
     spec:
+      terminationGracePeriodSeconds: 10
       containers:
       - name: emqx-go
-        image: emqx-go:cluster-poc # This would be a real image tag
-        imagePullPolicy: IfNotPresent
+        # Replace with the actual image path from your container registry.
+        image: emqx-go:latest
+        imagePullPolicy: Never # For local testing
         ports:
         - containerPort: 1883
           name: mqtt
         - containerPort: 8081
           name: grpc
         env:
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
-        - name: HEADLESS_SERVICE_NAME
-          value: "emqx-go-headless"
-        - name: GRPC_PORT_NAME
-          value: "grpc"
-        # Readiness and Liveness probes would be critical here in a real deployment
-        # to ensure traffic is only sent to healthy nodes.
-        # readinessProbe:
-        #   tcpSocket:
-        #     port: 1883
-        #   initialDelaySeconds: 5
-        #   periodSeconds: 10
-        # livenessProbe:
-        #   tcpSocket:
-        #     port: 1883
-        #   initialDelaySeconds: 15
-        #   periodSeconds: 20
-      terminationGracePeriodSeconds: 30
+          # The POD_NAMESPACE is used by the discovery mechanism to find peers.
+          # The Downward API is used to inject the pod's namespace into the env var.
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace

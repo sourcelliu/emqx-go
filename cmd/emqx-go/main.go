@@ -17,34 +17,117 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
+	"time"
 
 	"github.com/turtacn/emqx-go/pkg/broker"
+	"github.com/turtacn/emqx-go/pkg/cluster"
+	"github.com/turtacn/emqx-go/pkg/discovery"
+	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	"google.golang.org/grpc"
+)
+
+const (
+	grpcPort = ":8081"
 )
 
 func main() {
-	log.Println("Starting EMQX-GO Broker PoC (Phase 2)...")
+	log.Println("Starting EMQX-GO Broker PoC (Phase 3)...")
 
-	// Create a context that can be canceled to shut down the server.
+	nodeID, _ := os.Hostname()
+	if nodeID == "" {
+		nodeID = "local-node"
+	}
+	log.Printf("Node ID: %s", nodeID)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create and start the MQTT broker.
-	b := broker.New()
+	// --- Setup Broker and Cluster Manager ---
+	// The broker needs to be created first to pass its publish function to the manager.
+	var b *broker.Broker
+	clusterMgr := cluster.NewManager(nodeID, fmt.Sprintf("%s%s", nodeID, grpcPort), func(topic string, payload []byte) {
+		if b != nil {
+			b.RouteToLocalSubscribers(topic, payload)
+		}
+	})
+
+	// --- Start Local Broker ---
+	b = broker.New(nodeID, clusterMgr)
 	go func() {
 		if err := b.StartServer(ctx, ":1883"); err != nil {
 			log.Fatalf("Broker server failed: %v", err)
 		}
 	}()
 
-	// Wait for a shutdown signal.
+	// --- Start gRPC Server for Clustering ---
+	grpcServer := grpc.NewServer()
+	clusterServer := cluster.NewServer(nodeID, clusterMgr)
+	clusterpb.RegisterClusterServiceServer(grpcServer, clusterServer)
+
+	lis, err := net.Listen("tcp", grpcPort)
+	if err != nil {
+		log.Fatalf("Failed to listen for gRPC: %v", err)
+	}
+	go func() {
+		log.Printf("gRPC server listening on %s", grpcPort)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("gRPC server failed: %v", err)
+		}
+	}()
+	defer grpcServer.Stop()
+
+	// --- Start Discovery and Peer Connection ---
+	go startDiscovery(ctx, clusterMgr)
+
+	// --- Wait for Shutdown Signal ---
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGTERM)
 	<-shutdownChan
 
 	log.Println("Shutdown signal received. Shutting down...")
-	// The deferred cancel() will handle the shutdown of the server.
+}
+
+func startDiscovery(ctx context.Context, mgr *cluster.Manager) {
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "default"
+	}
+	serviceName := "emqx-go-headless"
+	portName := "grpc"
+
+	disc, err := discovery.NewKubeDiscovery(namespace, serviceName, portName)
+	if err != nil {
+		log.Printf("Could not initialize Kubernetes discovery: %v", err)
+		if strings.Contains(err.Error(), "in-cluster configuration") {
+			log.Println("This is not a Kubernetes environment. Skipping peer discovery.")
+		}
+		return
+	}
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			peers, err := disc.DiscoverPeers(ctx)
+			if err != nil {
+				log.Printf("Failed to discover peers: %v", err)
+				continue
+			}
+			log.Printf("Discovered %d peers", len(peers))
+			for _, peer := range peers {
+				go mgr.AddPeer(ctx, peer.ID, peer.Address)
+			}
+		}
+	}
 }

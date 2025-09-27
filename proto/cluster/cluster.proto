@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package proto;
+option go_package = "github.com/turtacn/emqx-go/pkg/proto/cluster;clusterpb";
+
+// ClusterService defines the gRPC service for cluster communication.
+// This service is used by nodes to join the cluster, synchronize state,
+// and forward messages.
+service ClusterService {
+  // Allows a node to join the cluster.
+  rpc Join(JoinRequest) returns (JoinResponse);
+
+  // Updates routing information in bulk across the cluster.
+  rpc BatchUpdateRoutes(BatchUpdateRoutesRequest) returns (BatchUpdateRoutesResponse);
+
+  // Forwards a published message to another node for local delivery.
+  rpc ForwardPublish(PublishForward) returns (ForwardAck);
+}
+
+// NodeInfo contains basic information about a node in the cluster.
+message NodeInfo {
+  // Unique identifier for the node.
+  string node_id = 1;
+  // Network address of the node (e.g., "ip:port").
+  string address = 2;
+  // Version of the EMQX application running on the node.
+  string version = 3;
+}
+
+// JoinRequest is sent by a node when it wants to join the cluster.
+message JoinRequest {
+  // Information about the node that is joining.
+  NodeInfo node = 1;
+  // Timestamp of the request.
+  int64 timestamp = 2;
+}
+
+// JoinResponse is the response to a JoinRequest.
+message JoinResponse {
+  // Indicates whether the join was successful.
+  bool success = 1;
+  // A message providing details about the result of the join operation.
+  string message = 2;
+  // List of all nodes currently in the cluster.
+  repeated NodeInfo cluster_nodes = 3;
+  // Unique identifier for the cluster.
+  string cluster_id = 4;
+}
+
+// Route represents the routing information for a topic.
+message Route {
+  // The topic filter.
+  string topic = 1;
+  // List of node IDs that are responsible for this topic.
+  repeated string node_ids = 2;
+}
+
+// BatchUpdateRoutesRequest is used to update routing information in bulk.
+message BatchUpdateRoutesRequest {
+  // List of routes to be updated.
+  repeated Route routes = 1;
+  // The type of operation ("add", "delete", "update").
+  string op_type = 2;
+  // ID of the node that initiated the update.
+  string from_node = 3;
+}
+
+// BatchUpdateRoutesResponse is the response to a BatchUpdateRoutesRequest.
+message BatchUpdateRoutesResponse {
+  // Indicates whether the update was successful.
+  bool success = 1;
+  // The number of routes that were updated.
+  int32 updated_count = 2;
+}
+
+// PublishForward is used to forward a published message to another node.
+message PublishForward {
+  // The topic the message was published to.
+  string topic = 1;
+  // The message payload.
+  bytes payload = 2;
+  // ID of the node where the message originated.
+  string from_node = 3;
+}
+
+// ForwardAck is the acknowledgment for a forwarded publish message.
+message ForwardAck {
+  // Indicates whether the forwarding was successful.
+  bool success = 1;
+}

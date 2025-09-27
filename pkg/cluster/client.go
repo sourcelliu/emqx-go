@@ -23,49 +23,54 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// Client provides the functionality to interact with another node in the cluster
-// as a gRPC client. It manages the connection and provides methods for sending
-// RPCs to the remote node's gRPC server.
+// Client manages the gRPC connection to another node in the cluster.
 type Client struct {
-	// NodeID is the identifier of the node this client belongs to.
 	NodeID string
 	conn   *grpc.ClientConn
 	client clusterpb.ClusterServiceClient
 }
 
-// NewClient creates and returns a new instance of a cluster Client.
+// NewClient creates a new cluster client.
 func NewClient(nodeID string) *Client {
 	return &Client{NodeID: nodeID}
 }
 
-// Connect establishes a gRPC connection to a peer node at the specified address.
-// It creates a new gRPC client for the ClusterService.
+// Connect establishes a gRPC connection to a peer node.
 func (c *Client) Connect(ctx context.Context, targetAddress string) error {
-	conn, err := grpc.DialContext(ctx, targetAddress, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	// In a real-world scenario, you would use secure credentials.
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	}
+	conn, err := grpc.DialContext(ctx, targetAddress, opts...)
 	if err != nil {
 		return err
 	}
 	c.conn = conn
 	c.client = clusterpb.NewClusterServiceClient(conn)
+	log.Printf("Successfully connected to peer at %s", targetAddress)
 	return nil
 }
 
-// Close terminates the gRPC connection to the peer node.
+// Close disconnects the client.
 func (c *Client) Close() {
 	if c.conn != nil {
 		c.conn.Close()
 	}
 }
 
-// Join sends a JoinRequest to the peer node to initiate the process of joining
-// the cluster.
+// Join sends a request to join the cluster.
 func (c *Client) Join(ctx context.Context, req *clusterpb.JoinRequest) (*clusterpb.JoinResponse, error) {
 	log.Printf("Sending Join request to peer")
 	return c.client.Join(ctx, req)
 }
 
-// BatchUpdateRoutes sends a batch of route updates to the peer node. This is
-// used to synchronize routing information across the cluster.
+// BatchUpdateRoutes sends a batch of route updates to a peer.
 func (c *Client) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpdateRoutesRequest) (*clusterpb.BatchUpdateRoutesResponse, error) {
 	return c.client.BatchUpdateRoutes(ctx, req)
+}
+
+// ForwardPublish sends a publish message to a peer.
+func (c *Client) ForwardPublish(ctx context.Context, req *clusterpb.PublishForward) (*clusterpb.ForwardAck, error) {
+	return c.client.ForwardPublish(ctx, req)
 }

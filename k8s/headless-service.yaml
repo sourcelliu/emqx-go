@@ -1,13 +1,25 @@
+# k8s/headless-service.yaml
+# This headless service provides stable network identities for the pods
+# in the StatefulSet. It is used by the Kubernetes discovery mechanism
+# to find peer nodes.
+
 apiVersion: v1
 kind: Service
 metadata:
   name: emqx-go-headless
+  labels:
+    app: emqx-go
 spec:
-  clusterIP: None # This makes the service "headless"
-  ports:
-  - port: 1883
-    name: mqtt
-  - port: 8081
-    name: grpc
+  # By setting clusterIP to None, we create a headless service.
+  # This means no single IP is allocated for the service. Instead, DNS
+  # will resolve the service name to the list of IPs of the pods.
+  clusterIP: None
   selector:
     app: emqx-go
+  ports:
+    - name: grpc
+      port: 8081
+      protocol: TCP
+    - name: mqtt
+      port: 1883
+      protocol: TCP

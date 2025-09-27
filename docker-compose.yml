@@ -2,25 +2,37 @@ version: '3.8'
 
 services:
   emqx-go-1:
-    build: .
-    container_name: emqx-go-1
+    build:
+      context: .
+      dockerfile: Dockerfile
     hostname: emqx-go-1
-    environment:
-      - NODE_ID=emqx-go-1
-      # In a real scenario, we'd need a way to pass peer addresses.
-      # Docker Compose networks make this straightforward via DNS.
-      - PEER_ADDRESSES=emqx-go-2:8081
+    container_name: emqx-go-1
     ports:
-      - "1883:1883" # MQTT
-      - "8081:8081" # gRPC for clustering
+      - "1883:1883"
+      - "8081:8081"
+    environment:
+      - POD_NAMESPACE=default
+    # In a real scenario, we might use a healthcheck.
+    # For this PoC, we rely on the service starting correctly.
 
   emqx-go-2:
-    build: .
-    container_name: emqx-go-2
+    build:
+      context: .
+      dockerfile: Dockerfile
     hostname: emqx-go-2
-    environment:
-      - NODE_ID=emqx-go-2
-      - PEER_ADDRESSES=emqx-go-1:8081
+    container_name: emqx-go-2
     ports:
       - "1884:1883" # Expose on a different host port to avoid conflicts
       - "8082:8081"
+    environment:
+      - POD_NAMESPACE=default
+    depends_on:
+      - emqx-go-1
+
+# Note: This Docker Compose setup does not provide automatic discovery between
+# the nodes. The discovery mechanism is designed for Kubernetes. To test
+# clustering locally with this setup, you would typically need to manually
+# configure the nodes to connect to each other, for example, by passing
+# peer addresses as command-line arguments or environment variables.
+# For the purpose of this PoC, the Kubernetes manifests are the primary
+# method for deploying a clustered setup.

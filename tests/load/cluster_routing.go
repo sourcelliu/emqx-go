@@ -1,81 +1,85 @@
-package main
+// Copyright 2023 The emqx-go Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// package load contains tests for verifying cluster functionality under load.
+package load
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"testing"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// This is not a standard Go test, but is designed to be run with `go run`.
-// It requires two broker nodes to be running and accessible.
+const (
+	brokerAddr1 = "tcp://localhost:1883"
+	brokerAddr2 = "tcp://localhost:1884" // Mapped in docker-compose.yml
+	testTopic   = "cluster/test"
+	testPayload = "message across cluster"
+)
+
+// TestClusterRouting verifies that a message published to one node is
+// correctly routed to a subscriber on another node.
 //
-// Usage:
-// go run ./tests/load/cluster_routing.go <broker_a_address> <broker_b_address>
-// e.g.:
-// go run ./tests/load/cluster_routing.go tcp://localhost:1883 tcp://localhost:1884
-
-func main() {
-	if len(os.Args) != 3 {
-		log.Fatalf("Usage: %s <broker_a_address> <broker_b_address>", os.Args[0])
-	}
-	brokerA := os.Args[1]
-	brokerB := os.Args[2]
-
-	log.Printf("Testing cluster routing between Node A (%s) and Node B (%s)", brokerA, brokerB)
-
-	// Use a dummy testing object to leverage testify assertions
-	t := &testing.T{}
-
-	// --- Subscriber on Node A ---
+// This test assumes a two-node cluster is running, with MQTT ports exposed
+// on localhost:1883 and localhost:1884, as defined in docker-compose.yml.
+func TestClusterRouting(t *testing.T) {
+	// --- Subscriber Client (connects to Node 1) ---
 	msgCh := make(chan mqtt.Message)
-	subOpts := mqtt.NewClientOptions().AddBroker(brokerA).SetClientID("cluster-subscriber")
+	subOpts := mqtt.NewClientOptions().AddBroker(brokerAddr1).SetClientID("subscriber-client")
 	subOpts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
 		msgCh <- msg
 	})
+
 	subClient := mqtt.NewClient(subOpts)
-	subToken := subClient.Connect()
-	subToken.Wait()
-	require.NoError(t, subToken.Error(), "Subscriber should connect to Node A")
+	if token := subClient.Connect(); token.Wait() && token.Error() != nil {
+		t.Fatalf("Subscriber client failed to connect to broker 1: %v", token.Error())
+	}
 	defer subClient.Disconnect(250)
 
-	subSubToken := subClient.Subscribe("cluster/test/topic", 0, nil)
-	subSubToken.Wait()
-	require.NoError(t, subSubToken.Error(), "Subscriber should subscribe on Node A")
-	log.Println("Subscriber connected to Node A and subscribed.")
+	if token := subClient.Subscribe(testTopic, 0, nil); token.Wait() && token.Error() != nil {
+		t.Fatalf("Subscriber client failed to subscribe: %v", token.Error())
+	}
+	fmt.Printf("Subscriber connected to %s and subscribed to %s\n", brokerAddr1, testTopic)
 
-	// --- Publisher on Node B ---
-	pubOpts := mqtt.NewClientOptions().AddBroker(brokerB).SetClientID("cluster-publisher")
+	// --- Publisher Client (connects to Node 2) ---
+	pubOpts := mqtt.NewClientOptions().AddBroker(brokerAddr2).SetClientID("publisher-client")
 	pubClient := mqtt.NewClient(pubOpts)
-	pubToken := pubClient.Connect()
-	pubToken.Wait()
-	require.NoError(t, pubToken.Error(), "Publisher should connect to Node B")
+	if token := pubClient.Connect(); token.Wait() && token.Error() != nil {
+		t.Fatalf("Publisher client failed to connect to broker 2: %v", token.Error())
+	}
 	defer pubClient.Disconnect(250)
-	log.Println("Publisher connected to Node B.")
+	fmt.Printf("Publisher connected to %s\n", brokerAddr2)
+
+	// Give some time for the subscription to propagate through the cluster.
+	time.Sleep(2 * time.Second)
 
 	// --- Publish Message ---
-	startTime := time.Now()
-	pubMsg := fmt.Sprintf("cluster message at %v", startTime)
-	pubPubToken := pubClient.Publish("cluster/test/topic", 0, false, pubMsg)
-	pubPubToken.Wait()
-	require.NoError(t, pubPubToken.Error(), "Publisher should publish on Node B")
-	log.Println("Publisher sent message on Node B.")
+	fmt.Printf("Publisher publishing message to %s\n", testTopic)
+	if token := pubClient.Publish(testTopic, 0, false, testPayload); token.Wait() && token.Error() != nil {
+		t.Fatalf("Publisher client failed to publish: %v", token.Error())
+	}
 
-	// --- Verification ---
+	// --- Verify Message Received by Subscriber ---
 	select {
 	case receivedMsg := <-msgCh:
-		latency := time.Since(startTime)
-		log.Printf("SUCCESS: Subscriber on Node A received message from Node B.")
-		log.Printf("Message: %s", string(receivedMsg.Payload()))
-		log.Printf("End-to-end Latency: %v", latency)
-		assert.Equal(t, "cluster/test/topic", receivedMsg.Topic())
-		assert.Equal(t, pubMsg, string(receivedMsg.Payload()))
+		fmt.Println("Subscriber received message!")
+		assert.Equal(t, testTopic, receivedMsg.Topic())
+		assert.Equal(t, testPayload, string(receivedMsg.Payload()))
 	case <-time.After(5 * time.Second):
-		log.Fatal("FAILURE: Timed out waiting for message to be routed between nodes.")
+		t.Fatal("Timed out waiting for message to be routed across the cluster")
 	}
 }
