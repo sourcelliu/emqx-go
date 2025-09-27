@@ -45,6 +45,9 @@ func Serve(addr string) {
 	http.Handle("/metrics", promhttp.Handler())
 	log.Printf("Metrics server listening on %s", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {
-		log.Fatalf("Metrics server failed: %v", err)
+		logFatalf("Metrics server failed: %v", err)
 	}
 }
+
+// logFatalf can be replaced by tests to prevent process exit.
+var logFatalf = log.Fatalf

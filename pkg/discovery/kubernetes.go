@@ -26,10 +26,20 @@ import (
 
 // KubeDiscovery implements the Discovery interface using the Kubernetes API.
 type KubeDiscovery struct {
-	clientset *kubernetes.Clientset
+	clientset kubernetes.Interface
 	namespace string
 	service   string
 	portName  string
+}
+
+// NewKubeDiscoveryWithClient creates a KubeDiscovery with a provided clientset, useful for testing.
+func NewKubeDiscoveryWithClient(clientset kubernetes.Interface, namespace, service, portName string) *KubeDiscovery {
+	return &KubeDiscovery{
+		clientset: clientset,
+		namespace: namespace,
+		service:   service,
+		portName:  portName,
+	}
 }
 
 // NewKubeDiscovery creates a new Kubernetes discovery client.
@@ -45,12 +55,7 @@ func NewKubeDiscovery(namespace, service, portName string) (*KubeDiscovery, erro
 		return nil, fmt.Errorf("could not create clientset: %w", err)
 	}
 
-	return &KubeDiscovery{
-		clientset: clientset,
-		namespace: namespace,
-		service:   service,
-		portName:  portName,
-	}, nil
+	return NewKubeDiscoveryWithClient(clientset, namespace, service, portName), nil
 }
 
 // DiscoverPeers finds other pods belonging to the same service by querying
@@ -62,7 +67,12 @@ func (k *KubeDiscovery) DiscoverPeers(ctx context.Context) ([]Peer, error) {
 	}
 
 	var peers []Peer
-	hostname, _ := os.Hostname() // Used to identify and exclude the current pod
+	// In a Kubernetes environment, the pod's hostname is usually available via the HOSTNAME env var.
+	// We fall back to os.Hostname() for other cases.
+	hostname := os.Getenv("HOSTNAME")
+	if hostname == "" {
+		hostname, _ = os.Hostname()
+	}
 
 	for _, subset := range endpoints.Subsets {
 		var port int32

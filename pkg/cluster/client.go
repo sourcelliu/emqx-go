@@ -35,8 +35,11 @@ func NewClient(nodeID string) *Client {
 	return &Client{NodeID: nodeID}
 }
 
-// Connect establishes a gRPC connection to a peer node.
-func (c *Client) Connect(ctx context.Context, targetAddress string) error {
+// client.go
+
+// connectFunc is a package-level variable that can be replaced in tests
+// to allow for mocking of the gRPC connection.
+var connectFunc = func(c *Client, ctx context.Context, targetAddress string) error {
 	// In a real-world scenario, you would use secure credentials.
 	opts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
@@ -50,6 +53,11 @@ func (c *Client) Connect(ctx context.Context, targetAddress string) error {
 	c.client = clusterpb.NewClusterServiceClient(conn)
 	log.Printf("Successfully connected to peer at %s", targetAddress)
 	return nil
+}
+
+// Connect establishes a gRPC connection to a peer node.
+func (c *Client) Connect(ctx context.Context, targetAddress string) error {
+	return connectFunc(c, ctx, targetAddress)
 }
 
 // Close disconnects the client.

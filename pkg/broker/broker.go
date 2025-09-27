@@ -162,7 +162,9 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 		case packets.Disconnect:
 			log.Printf("Client %s sent DISCONNECT.", clientID)
-			return
+			// A clean disconnect means we should break the loop and proceed
+			// to the cleanup code below.
+			goto end_loop
 
 		default:
 			log.Printf("Received unhandled packet type: %v", pk.FixedHeader.Type)
@@ -173,6 +175,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			return
 		}
 	}
+end_loop:
 
 	if clientID != "" {
 		b.unregisterSession(clientID)
