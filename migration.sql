@@ -1,0 +1,11 @@
+INSERT INTO mqtt_sessions (client_id, clean_start, keepalive_interval, created_at) VALUES ('client_001"', true, 60, 1695811200);
+INSERT INTO mqtt_sessions (client_id, clean_start, keepalive_interval, created_at) VALUES ('client_002"', false, 120, 1695811300);
+INSERT INTO mqtt_sessions (client_id, clean_start, keepalive_interval, created_at) VALUES ('client_003"', true, 300, 1695811400);
+INSERT INTO mqtt_subscriptions (topic_filter, client_id, qos, no_local, retain_as_published) VALUES ('topic/sensor/+"', 'client_001"', 1, false, false);
+INSERT INTO mqtt_subscriptions (topic_filter, client_id, qos, no_local, retain_as_published) VALUES ('topic/device/#"', 'client_002"', 2, true, false);
+INSERT INTO mqtt_subscriptions (topic_filter, client_id, qos, no_local, retain_as_published) VALUES ('alerts/+/critical"', 'client_001"', 1, false, true);
+INSERT INTO mqtt_subscriptions (topic_filter, client_id, qos, no_local, retain_as_published) VALUES ('data/temperature"', 'client_003"', 0, false, false);
+INSERT INTO mqtt_acl_rules (client_id, action, permission, topic_filter) VALUES ('client_001"', 'publish', 'allow', 'topic/sensor/+"');
+INSERT INTO mqtt_acl_rules (client_id, action, permission, topic_filter) VALUES ('client_001"', 'subscribe', 'allow', 'alerts/+/critical"');
+INSERT INTO mqtt_acl_rules (client_id, action, permission, topic_filter) VALUES ('client_002"', 'publish', 'deny', 'admin/#"');
+INSERT INTO mqtt_acl_rules (client_id, action, permission, topic_filter) VALUES ('client_002"', 'subscribe', 'allow', 'topic/device/#"');
