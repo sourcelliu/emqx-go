@@ -5,6 +5,7 @@ go 1.25.1
 require (
 	github.com/asynkron/protoactor-go v0.0.0-20250909165758-e952b3c0850e
 	github.com/eclipse/paho.mqtt.golang v1.5.1
+	github.com/lib/pq v1.10.9
 	github.com/mochi-mqtt/server/v2 v2.7.9
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/grpc v1.75.0
@@ -33,7 +34,6 @@ require (
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/lib/pq v1.10.9 // indirect
 	github.com/lithammer/shortuuid/v4 v4.2.0 // indirect
 	github.com/lmittmann/tint v1.1.2 // indirect
 	github.com/mailru/easyjson v0.9.0 // indirect
