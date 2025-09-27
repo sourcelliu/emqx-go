@@ -1,5 +1,0 @@
-import "../../../../../../etc/passwd";
-
-message Pwnd {
-  required string pwn = 1;
-}

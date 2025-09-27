@@ -1,5 +1,0 @@
-import "i_will_never_exist.proto";
-
-message Missing {
-  required string missing = 1;
-}

@@ -1,1 +1,0 @@
-We no longer support setting key templates (and thus implicitly specifying key dispatch strategy) in the `parameters.strategy` field of RocketMQ Action.  Instead, users should set `parameters.strategy = key_dispatch` and specify the template in `parameters.key`.
