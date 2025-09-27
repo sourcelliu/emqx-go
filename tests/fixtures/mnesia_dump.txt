@@ -1,0 +1,43 @@
+%% Sample Mnesia/ETS dump for EMQX migration testing
+%% Format: {table_name, key, value}
+
+%% MQTT Sessions
+{emqx_session, <<"client_001">>, {session, <<"client_001">>, true, 60, #{}, #{}, [], 1695811200}}.
+{emqx_session, <<"client_002">>, {session, <<"client_002">>, false, 120, #{}, #{}, [], 1695811300}}.
+{emqx_session, <<"client_003">>, {session, <<"client_003">>, true, 300, #{}, #{}, [], 1695811400}}.
+
+%% Subscriptions
+{emqx_suboption, {<<"topic/sensor/+">>, <<"client_001">>}, {suboption, 1, false, false, 0}}.
+{emqx_suboption, {<<"topic/device/#">>, <<"client_002">>}, {suboption, 2, true, false, 0}}.
+{emqx_suboption, {<<"alerts/+/critical">>, <<"client_001">>}, {suboption, 1, false, true, 5}}.
+{emqx_suboption, {<<"data/temperature">>, <<"client_003">>}, {suboption, 0, false, false, 0}}.
+
+%% Routes (topic to subscriber mapping)
+{emqx_route, <<"topic/sensor/temp">>, <<"client_001">>}.
+{emqx_route, <<"topic/device/status">>, <<"client_002">>}.
+{emqx_route, <<"alerts/fire/critical">>, <<"client_001">>}.
+{emqx_route, <<"data/temperature">>, <<"client_003">>}.
+
+%% Retained Messages
+{emqx_message, <<"config/global">>, {message, <<"msg_001">>, 1, <<"config/global">>, <<"emqx@node1">>, <<"client_admin">>, #{retain => true}, <<"{'debug': true}">>, 1695811000}}.
+{emqx_message, <<"status/system">>, {message, <<"msg_002">>, 0, <<"status/system">>, <<"emqx@node1">>, <<"client_monitor">>, #{retain => true}, <<"online">>, 1695811100}}.
+
+%% Connection States
+{emqx_connection, <<"client_001">>, {connection, <<"client_001">>, <<"192.168.1.100">>, 1883, <<"emqx@node1">>, connected, 1695811200, #{clean_start => true, keepalive => 60}}}.
+{emqx_connection, <<"client_002">>, {connection, <<"client_002">>, <<"192.168.1.101">>, 1883, <<"emqx@node2">>, connected, 1695811300, #{clean_start => false, keepalive => 120}}}.
+{emqx_connection, <<"client_003">>, {connection, <<"client_003">>, <<"192.168.1.102">>, 1883, <<"emqx@node1">>, disconnected, 1695811400, #{clean_start => true, keepalive => 300}}}.
+
+%% Cluster Nodes
+{emqx_cluster, <<"emqx@node1">>, {node, <<"emqx@node1">>, running, 1695810000, <<"192.168.1.10">>}}.
+{emqx_cluster, <<"emqx@node2">>, {node, <<"emqx@node2">>, running, 1695810100, <<"192.168.1.11">>}}.
+
+%% Topic Metrics
+{emqx_stats, {topic_metrics, <<"topic/sensor/+">>}, {metrics, 1500, 45000, 1695811500}}.
+{emqx_stats, {topic_metrics, <<"topic/device/#">>}, {metrics, 800, 24000, 1695811500}}.
+{emqx_stats, {client_metrics, <<"client_001">>}, {metrics, 200, 6000, 1695811500}}.
+
+%% ACL Rules
+{emqx_acl, {<<"client_001">>, publish}, {acl, allow, <<"topic/sensor/+">>, all}}.
+{emqx_acl, {<<"client_001">>, subscribe}, {acl, allow, <<"alerts/+/critical">>, all}}.
+{emqx_acl, {<<"client_002">>, publish}, {acl, deny, <<"admin/#">>, all}}.
+{emqx_acl, {<<"client_002">>, subscribe}, {acl, allow, <<"topic/device/#">>, all}}.

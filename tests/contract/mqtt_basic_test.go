@@ -37,7 +37,8 @@ func TestBrokerE2E(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	b := broker.New()
+	// For a single-node test, the cluster manager can be nil.
+	b := broker.New("test-node", nil)
 	go func() {
 		if err := b.StartServer(ctx, ":1883"); err != nil {
 			log.Printf("Test broker server failed: %v", err)
