@@ -165,7 +165,29 @@ Jules 的运行环境是一个 **受限制的、非持久化的沙箱环境**，
 ```bash
 git clone https://github.com/turtacn/emqx-go.git emqx-go 
 cd emqx-go 
-// emqx-go/emqx-src 目录为 https://github.com/emqx/emqx.git master 分支完整代码
+
+```
+
+1.1 外部引入源及其位置：
+
+```
+# 下载压缩包（若用wget：wget -O master.zip https://...）
+curl -L https://github.com/emqx/emqx/archive/refs/heads/master.zip -o master.zip
+
+# 创建目标目录
+mkdir -p emqx-src
+
+# 解压到临时目录（避免直接解压到emqx-src导致多一级）
+unzip master.zip -d emqx-src
+
+# 获取解压后的顶层目录名（通常是emqx-master）
+TOP_DIR=$(find emqx-src -maxdepth 1 -type d ! -name "emqx-src" | head -n 1)
+
+# 将顶层目录内的所有文件（包括隐藏文件）移动到emqx-src根目录
+mv "$TOP_DIR"/* "$TOP_DIR"/.* emqx-src/ 2>/dev/null || true
+
+# 删除空的顶层目录和下载的zip包
+rm -rf "$TOP_DIR" master.zip
 ```
 
 2. 分支规范（示例）：
