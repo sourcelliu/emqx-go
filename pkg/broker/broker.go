@@ -25,6 +25,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 
 	"github.com/mochi-mqtt/server/v2/packets"
@@ -126,7 +127,21 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 		pk, err := readPacket(reader)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("Error reading packet from %s: %v", conn.RemoteAddr(), err)
+				// Enhanced error handling for protocol violations
+				if strings.Contains(err.Error(), "qos out of range") {
+					log.Printf("Protocol violation from %s (client: %s): Invalid QoS value received. MQTT spec allows QoS 0, 1, or 2 only. Error: %v",
+						conn.RemoteAddr(), clientID, err)
+					// Send CONNACK with error if we haven't sent one yet
+					if clientID == "" {
+						resp := packets.Packet{
+							FixedHeader: packets.FixedHeader{Type: packets.Connack},
+							ReasonCode:  0x80, // Protocol Error (0x80)
+						}
+						writePacket(conn, &resp)
+					}
+				} else {
+					log.Printf("Error reading packet from %s (client: %s): %v", conn.RemoteAddr(), clientID, err)
+				}
 			}
 			break
 		}
@@ -151,13 +166,25 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				return
 			}
 			var newRoutes []*clusterpb.Route
+			var reasonCodes []byte
 			for _, sub := range pk.Filters {
-				b.topics.Subscribe(sub.Filter, sessionMailbox)
-				log.Printf("Client %s subscribed to %s", clientID, sub.Filter)
+				// Validate QoS level (MQTT spec allows 0, 1, 2 only)
+				grantedQoS := sub.Qos
+				if sub.Qos > 2 {
+					log.Printf("Client %s requested invalid QoS %d for topic %s, downgrading to QoS 2",
+						clientID, sub.Qos, sub.Filter)
+					grantedQoS = 2
+				}
+
+				// Store subscription with validated QoS level
+				b.topics.Subscribe(sub.Filter, sessionMailbox, grantedQoS)
+				log.Printf("Client %s subscribed to %s with QoS %d", clientID, sub.Filter, grantedQoS)
 				newRoutes = append(newRoutes, &clusterpb.Route{
 					Topic:   sub.Filter,
 					NodeIds: []string{b.nodeID},
 				})
+				// Return the granted QoS level
+				reasonCodes = append(reasonCodes, grantedQoS)
 			}
 			// Announce these new routes to peers
 			if b.cluster != nil {
@@ -167,12 +194,67 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			resp := packets.Packet{
 				FixedHeader: packets.FixedHeader{Type: packets.Suback},
 				PacketID:    pk.PacketID,
-				ReasonCodes: []byte{packets.CodeGrantedQos0.Code},
+				ReasonCodes: reasonCodes,
 			}
 			err = writePacket(conn, &resp)
 
 		case packets.Publish:
-			b.routePublish(pk.TopicName, pk.Payload)
+			// Validate QoS level for publish (MQTT spec allows 0, 1, 2 only)
+			publishQoS := pk.FixedHeader.Qos
+			if pk.FixedHeader.Qos > 2 {
+				log.Printf("Client %s attempted to publish with invalid QoS %d, downgrading to QoS 2",
+					clientID, pk.FixedHeader.Qos)
+				publishQoS = 2
+			}
+
+			// Route the published message to subscribers
+			b.routePublish(pk.TopicName, pk.Payload, publishQoS)
+
+			// Send acknowledgment back to publisher based on QoS level
+			if publishQoS == 1 {
+				// QoS 1: Send PUBACK to publisher
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Puback},
+					PacketID:    pk.PacketID,
+				}
+				err = writePacket(conn, &resp)
+			} else if publishQoS == 2 {
+				// QoS 2: Send PUBREC to publisher (start QoS 2 handshake)
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Pubrec},
+					PacketID:    pk.PacketID,
+				}
+				err = writePacket(conn, &resp)
+			}
+			// QoS 0: No acknowledgment needed
+
+		case packets.Puback:
+			// QoS 1 publish acknowledgment from client
+			log.Printf("Client %s sent PUBACK for packet ID %d", clientID, pk.PacketID)
+			// In a full implementation, we would remove this message from pending acks
+
+		case packets.Pubrec:
+			// QoS 2 publish receive from client - send PUBREL response
+			log.Printf("Client %s sent PUBREC for packet ID %d", clientID, pk.PacketID)
+			resp := packets.Packet{
+				FixedHeader: packets.FixedHeader{Type: packets.Pubrel, Qos: 1},
+				PacketID:    pk.PacketID,
+			}
+			err = writePacket(conn, &resp)
+
+		case packets.Pubrel:
+			// QoS 2 publish release from client - send PUBCOMP response
+			log.Printf("Client %s sent PUBREL for packet ID %d", clientID, pk.PacketID)
+			resp := packets.Packet{
+				FixedHeader: packets.FixedHeader{Type: packets.Pubcomp},
+				PacketID:    pk.PacketID,
+			}
+			err = writePacket(conn, &resp)
+
+		case packets.Pubcomp:
+			// QoS 2 publish complete from client
+			log.Printf("Client %s sent PUBCOMP for packet ID %d", clientID, pk.PacketID)
+			// In a full implementation, we would remove this message from pending acks
 
 		case packets.Pingreq:
 			resp := packets.Packet{FixedHeader: packets.FixedHeader{Type: packets.Pingresp}}
@@ -231,9 +313,9 @@ func (b *Broker) unregisterSession(clientID string) {
 }
 
 // routePublish sends a message to all local and remote subscribers of a topic.
-func (b *Broker) routePublish(topicName string, payload []byte) {
+func (b *Broker) routePublish(topicName string, payload []byte, publishQoS byte) {
 	// Route to local subscribers
-	b.RouteToLocalSubscribers(topicName, payload)
+	b.RouteToLocalSubscribersWithQoS(topicName, payload, publishQoS)
 
 	// Route to remote subscribers if clustering is enabled
 	if b.cluster != nil {
@@ -258,18 +340,35 @@ func (b *Broker) routePublish(topicName string, payload []byte) {
 //
 // - topicName: The topic to which the message is published.
 // - payload: The message content.
-func (b *Broker) RouteToLocalSubscribers(topicName string, payload []byte) {
+// - publishQoS: The QoS level of the published message.
+func (b *Broker) RouteToLocalSubscribersWithQoS(topicName string, payload []byte, publishQoS byte) {
 	subscribers := b.topics.GetSubscribers(topicName)
 	if len(subscribers) > 0 {
 		log.Printf("Routing message on topic '%s' to %d local subscribers", topicName, len(subscribers))
 	}
-	msg := session.Publish{
-		Topic:   topicName,
-		Payload: payload,
+	for _, sub := range subscribers {
+		// Apply QoS downgrade rule: effective QoS = min(publish QoS, subscription QoS)
+		effectiveQoS := publishQoS
+		if sub.QoS < publishQoS {
+			effectiveQoS = sub.QoS
+		}
+
+		msg := session.Publish{
+			Topic:   topicName,
+			Payload: payload,
+			QoS:     effectiveQoS,
+		}
+		sub.Mailbox.Send(msg)
 	}
-	for _, mb := range subscribers {
-		mb.Send(msg)
-	}
+}
+
+// RouteToLocalSubscribers delivers a message to all clients on the current node
+// that are subscribed to the given topic. This is the backward compatibility method.
+//
+// - topicName: The topic to which the message is published.
+// - payload: The message content.
+func (b *Broker) RouteToLocalSubscribers(topicName string, payload []byte) {
+	b.RouteToLocalSubscribersWithQoS(topicName, payload, 0)
 }
 
 // readPacket reads a full MQTT packet from a connection.
@@ -305,6 +404,14 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 		err = pk.PublishDecode(buf)
 	case packets.Subscribe:
 		err = pk.SubscribeDecode(buf)
+	case packets.Puback:
+		err = pk.PubackDecode(buf)
+	case packets.Pubrec:
+		err = pk.PubrecDecode(buf)
+	case packets.Pubrel:
+		err = pk.PubrelDecode(buf)
+	case packets.Pubcomp:
+		err = pk.PubcompDecode(buf)
 	case packets.Pingreq:
 		err = pk.PingreqDecode(buf)
 	case packets.Disconnect:
@@ -330,6 +437,14 @@ func writePacket(w io.Writer, pk *packets.Packet) error {
 		err = pk.PingrespEncode(&buf)
 	case packets.Publish:
 		err = pk.PublishEncode(&buf)
+	case packets.Puback:
+		err = pk.PubackEncode(&buf)
+	case packets.Pubrec:
+		err = pk.PubrecEncode(&buf)
+	case packets.Pubrel:
+		err = pk.PubrelEncode(&buf)
+	case packets.Pubcomp:
+		err = pk.PubcompEncode(&buf)
 	default:
 		return fmt.Errorf("unsupported packet type for writing: %v", pk.FixedHeader.Type)
 	}
