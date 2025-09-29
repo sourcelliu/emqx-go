@@ -206,7 +206,27 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 					clientID, pk.FixedHeader.Qos)
 				publishQoS = 2
 			}
+
+			// Route the published message to subscribers
 			b.routePublish(pk.TopicName, pk.Payload, publishQoS)
+
+			// Send acknowledgment back to publisher based on QoS level
+			if publishQoS == 1 {
+				// QoS 1: Send PUBACK to publisher
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Puback},
+					PacketID:    pk.PacketID,
+				}
+				err = writePacket(conn, &resp)
+			} else if publishQoS == 2 {
+				// QoS 2: Send PUBREC to publisher (start QoS 2 handshake)
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Pubrec},
+					PacketID:    pk.PacketID,
+				}
+				err = writePacket(conn, &resp)
+			}
+			// QoS 0: No acknowledgment needed
 
 		case packets.Puback:
 			// QoS 1 publish acknowledgment from client
@@ -417,6 +437,10 @@ func writePacket(w io.Writer, pk *packets.Packet) error {
 		err = pk.PingrespEncode(&buf)
 	case packets.Publish:
 		err = pk.PublishEncode(&buf)
+	case packets.Puback:
+		err = pk.PubackEncode(&buf)
+	case packets.Pubrec:
+		err = pk.PubrecEncode(&buf)
 	case packets.Pubrel:
 		err = pk.PubrelEncode(&buf)
 	case packets.Pubcomp:
