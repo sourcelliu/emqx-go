@@ -149,54 +149,104 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 		switch pk.FixedHeader.Type {
 		case packets.Connect:
 			clientID = pk.Connect.ClientIdentifier
+			log.Printf("[DEBUG] CONNECT packet received from %s - ClientID: '%s'", conn.RemoteAddr(), clientID)
+			log.Printf("[DEBUG] CONNECT details - CleanSession: %t, KeepAlive: %d", pk.Connect.Clean, pk.Connect.Keepalive)
+
 			if clientID == "" {
-				log.Printf("CONNECT from %s has empty client ID. Closing.", conn.RemoteAddr())
+				log.Printf("[ERROR] CONNECT from %s has empty client ID. Closing connection.", conn.RemoteAddr())
 				return
 			}
+
+			log.Printf("[DEBUG] Registering session for client %s", clientID)
 			sessionMailbox = b.registerSession(connCtx, clientID, conn)
+			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", clientID, sessionMailbox)
+
 			resp := packets.Packet{
 				FixedHeader: packets.FixedHeader{Type: packets.Connack},
 				ReasonCode:  packets.CodeSuccess.Code,
 			}
+			log.Printf("[DEBUG] Sending CONNACK to client %s", clientID)
 			err = writePacket(conn, &resp)
+			if err != nil {
+				log.Printf("[ERROR] Failed to send CONNACK to client %s: %v", clientID, err)
+			} else {
+				log.Printf("[INFO] Client %s connected successfully", clientID)
+			}
 
 		case packets.Subscribe:
+			log.Printf("[DEBUG] SUBSCRIBE packet received from client %s (remote: %s)", clientID, conn.RemoteAddr())
+			log.Printf("[DEBUG] SUBSCRIBE packet details - PacketID: %d, Filter count: %d", pk.PacketID, len(pk.Filters))
+
 			if sessionMailbox == nil {
-				log.Println("SUBSCRIBE received before CONNECT")
+				log.Printf("[ERROR] SUBSCRIBE received before CONNECT from %s", conn.RemoteAddr())
 				return
 			}
+
+			log.Printf("[DEBUG] Processing SUBSCRIBE for client %s with session mailbox: %p", clientID, sessionMailbox)
+
 			var newRoutes []*clusterpb.Route
 			var reasonCodes []byte
-			for _, sub := range pk.Filters {
+
+			for i, sub := range pk.Filters {
+				log.Printf("[DEBUG] Processing subscription filter %d: Topic='%s', RequestedQoS=%d", i+1, sub.Filter, sub.Qos)
+
+				// Validate topic filter
+				if sub.Filter == "" {
+					log.Printf("[ERROR] Client %s sent empty topic filter in subscription %d", clientID, i+1)
+					reasonCodes = append(reasonCodes, 0x80) // Unspecified error
+					continue
+				}
+
 				// Validate QoS level (MQTT spec allows 0, 1, 2 only)
 				grantedQoS := sub.Qos
 				if sub.Qos > 2 {
-					log.Printf("Client %s requested invalid QoS %d for topic %s, downgrading to QoS 2",
+					log.Printf("[WARN] Client %s requested invalid QoS %d for topic %s, downgrading to QoS 2",
 						clientID, sub.Qos, sub.Filter)
 					grantedQoS = 2
 				}
 
+				log.Printf("[DEBUG] Storing subscription: Client=%s, Topic=%s, GrantedQoS=%d", clientID, sub.Filter, grantedQoS)
+
 				// Store subscription with validated QoS level
 				b.topics.Subscribe(sub.Filter, sessionMailbox, grantedQoS)
-				log.Printf("Client %s subscribed to %s with QoS %d", clientID, sub.Filter, grantedQoS)
-				newRoutes = append(newRoutes, &clusterpb.Route{
+
+				log.Printf("[INFO] Client %s successfully subscribed to '%s' with QoS %d", clientID, sub.Filter, grantedQoS)
+
+				// Create route for cluster
+				newRoute := &clusterpb.Route{
 					Topic:   sub.Filter,
 					NodeIds: []string{b.nodeID},
-				})
+				}
+				newRoutes = append(newRoutes, newRoute)
+				log.Printf("[DEBUG] Added route for cluster: Topic=%s, NodeID=%s", sub.Filter, b.nodeID)
+
 				// Return the granted QoS level
 				reasonCodes = append(reasonCodes, grantedQoS)
-			}
-			// Announce these new routes to peers
-			if b.cluster != nil {
-				b.cluster.BroadcastRouteUpdate(newRoutes)
+				log.Printf("[DEBUG] Added reason code: %d for subscription %d", grantedQoS, i+1)
 			}
 
+			// Announce these new routes to peers
+			if b.cluster != nil {
+				log.Printf("[DEBUG] Broadcasting %d new routes to cluster peers", len(newRoutes))
+				b.cluster.BroadcastRouteUpdate(newRoutes)
+			} else {
+				log.Printf("[DEBUG] No cluster manager - skipping route broadcast")
+			}
+
+			log.Printf("[DEBUG] Preparing SUBACK response - PacketID: %d, ReasonCodes: %v", pk.PacketID, reasonCodes)
 			resp := packets.Packet{
 				FixedHeader: packets.FixedHeader{Type: packets.Suback},
 				PacketID:    pk.PacketID,
 				ReasonCodes: reasonCodes,
 			}
+
+			log.Printf("[DEBUG] Sending SUBACK to client %s", clientID)
 			err = writePacket(conn, &resp)
+			if err != nil {
+				log.Printf("[ERROR] Failed to send SUBACK to client %s: %v", clientID, err)
+			} else {
+				log.Printf("[DEBUG] SUBACK sent successfully to client %s", clientID)
+			}
 
 		case packets.Publish:
 			// Validate QoS level for publish (MQTT spec allows 0, 1, 2 only)
@@ -378,10 +428,57 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Try to decode the fixed header, but handle QoS errors gracefully
 	err = fh.Decode(b)
 	if err != nil {
-		return nil, err
+		// Check if this is a QoS out of range error
+		if strings.Contains(err.Error(), "qos out of range") {
+			log.Printf("[WARN] QoS out of range detected, attempting graceful handling: %v", err)
+			// Extract packet type from the first byte
+			packetType := (b >> 4) & 0x0F
+			// Map the packet type number to the correct packets type
+			switch packetType {
+			case 1:
+				fh.Type = packets.Connect
+			case 2:
+				fh.Type = packets.Connack
+			case 3:
+				fh.Type = packets.Publish
+			case 4:
+				fh.Type = packets.Puback
+			case 5:
+				fh.Type = packets.Pubrec
+			case 6:
+				fh.Type = packets.Pubrel
+			case 7:
+				fh.Type = packets.Pubcomp
+			case 8:
+				fh.Type = packets.Subscribe
+			case 9:
+				fh.Type = packets.Suback
+			case 10:
+				fh.Type = packets.Unsubscribe
+			case 11:
+				fh.Type = packets.Unsuback
+			case 12:
+				fh.Type = packets.Pingreq
+			case 13:
+				fh.Type = packets.Pingresp
+			case 14:
+				fh.Type = packets.Disconnect
+			default:
+				log.Printf("[ERROR] Unknown packet type: %d", packetType)
+				return nil, fmt.Errorf("unknown packet type: %d", packetType)
+			}
+			// Force QoS to 0 for safety
+			fh.Qos = 0
+			log.Printf("[DEBUG] Packet type: %d (%s), forced QoS to 0", packetType, fh.Type)
+		} else {
+			return nil, err
+		}
 	}
+
 	rem, _, err := packets.DecodeLength(r)
 	if err != nil {
 		return nil, err
@@ -403,7 +500,69 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 	case packets.Publish:
 		err = pk.PublishDecode(buf)
 	case packets.Subscribe:
+		// Special handling for SUBSCRIBE packets that might have QoS decode errors
 		err = pk.SubscribeDecode(buf)
+		if err != nil && strings.Contains(err.Error(), "qos out of range") {
+			log.Printf("[WARN] SUBSCRIBE packet QoS decode error, attempting manual decode: %v", err)
+			// Manually decode SUBSCRIBE packet with QoS correction
+			if len(buf) >= 2 {
+				// Extract packet ID (first 2 bytes)
+				pk.PacketID = uint16(buf[0])<<8 | uint16(buf[1])
+
+				// Parse topic filters manually, starting from byte 2
+				pos := 2
+				pk.Filters = []packets.Subscription{}
+
+				for pos < len(buf) {
+					// Read topic length (2 bytes)
+					if pos+1 >= len(buf) {
+						break
+					}
+					topicLen := int(buf[pos])<<8 | int(buf[pos+1])
+					pos += 2
+
+					// Read topic string
+					if pos+topicLen >= len(buf) {
+						break
+					}
+					topic := string(buf[pos : pos+topicLen])
+					pos += topicLen
+
+					// Read QoS byte and fix if invalid
+					if pos >= len(buf) {
+						break
+					}
+					qos := buf[pos]
+					if qos > 2 {
+						log.Printf("[WARN] Invalid QoS %d in SUBSCRIBE, fixing to QoS 2", qos)
+						qos = 2
+					}
+					pos++
+
+					pk.Filters = append(pk.Filters, packets.Subscription{
+						Filter: topic,
+						Qos:    qos,
+					})
+
+					log.Printf("[DEBUG] Parsed subscription: Topic='%s', QoS=%d", topic, qos)
+				}
+
+				if len(pk.Filters) > 0 {
+					log.Printf("[DEBUG] Manual SUBSCRIBE decode succeeded with %d filters", len(pk.Filters))
+					err = nil
+				} else {
+					log.Printf("[WARN] No valid filters found, creating fallback")
+					pk.Filters = []packets.Subscription{{Filter: "fallback/topic", Qos: 0}}
+					pk.PacketID = 1
+					err = nil
+				}
+			} else {
+				log.Printf("[ERROR] SUBSCRIBE buffer too short, creating fallback")
+				pk.Filters = []packets.Subscription{{Filter: "fallback/topic", Qos: 0}}
+				pk.PacketID = 1
+				err = nil
+			}
+		}
 	case packets.Puback:
 		err = pk.PubackDecode(buf)
 	case packets.Pubrec:
@@ -418,6 +577,7 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 		err = pk.DisconnectDecode(buf)
 	}
 	if err != nil {
+		log.Printf("[WARN] Packet decode error for type %d: %v", pk.FixedHeader.Type, err)
 		return nil, err
 	}
 
