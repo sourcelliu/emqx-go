@@ -25,30 +25,38 @@ import (
 	"github.com/turtacn/emqx-go/pkg/actor"
 )
 
+// Subscription represents a single topic subscription with its QoS level.
+type Subscription struct {
+	Mailbox *actor.Mailbox
+	QoS     byte
+}
+
 // Store provides a thread-safe, in-memory mapping of topic strings to lists of
 // subscriber mailboxes. It is the central component for tracking which clients
 // are subscribed to which topics.
 type Store struct {
-	subscriptions map[string][]*actor.Mailbox
+	subscriptions map[string][]*Subscription
 	mu            sync.RWMutex
 }
 
 // NewStore creates and initializes a new, empty topic Store.
 func NewStore() *Store {
 	return &Store{
-		subscriptions: make(map[string][]*actor.Mailbox),
+		subscriptions: make(map[string][]*Subscription),
 	}
 }
 
 // Subscribe adds a subscriber's mailbox to the list of subscribers for a given
-// topic. If the topic does not exist, it is created.
+// topic with the specified QoS level. If the topic does not exist, it is created.
 //
 // - topic: The topic string to subscribe to.
 // - mailbox: The mailbox of the subscribing actor, which will receive the messages.
-func (s *Store) Subscribe(topic string, mailbox *actor.Mailbox) {
+// - qos: The QoS level for this subscription.
+func (s *Store) Subscribe(topic string, mailbox *actor.Mailbox, qos byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.subscriptions[topic] = append(s.subscriptions[topic], mailbox)
+	sub := &Subscription{Mailbox: mailbox, QoS: qos}
+	s.subscriptions[topic] = append(s.subscriptions[topic], sub)
 }
 
 // Unsubscribe removes a subscriber's mailbox from a specific topic's
@@ -61,9 +69,9 @@ func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if subscribers, ok := s.subscriptions[topic]; ok {
-		var newSubscribers []*actor.Mailbox
+		var newSubscribers []*Subscription
 		for _, sub := range subscribers {
-			if sub != mailbox {
+			if sub.Mailbox != mailbox {
 				newSubscribers = append(newSubscribers, sub)
 			}
 		}
@@ -75,21 +83,20 @@ func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 	}
 }
 
-// GetSubscribers returns a slice of all mailboxes subscribed to a specific
-// topic.
+// GetSubscribers returns a slice of all subscriptions for a specific topic.
 //
 // Note: This is a simplified implementation for the proof-of-concept and does
 // not support MQTT wildcards (+ or #). It only performs exact string matches.
 //
 // - topic: The topic for which to retrieve subscribers.
 //
-// Returns a copy of the slice of subscriber mailboxes.
-func (s *Store) GetSubscribers(topic string) []*actor.Mailbox {
+// Returns a copy of the slice of subscriber subscriptions.
+func (s *Store) GetSubscribers(topic string) []*Subscription {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	// Return a copy to prevent race conditions on the slice itself.
 	subs := s.subscriptions[topic]
-	subsCopy := make([]*actor.Mailbox, len(subs))
+	subsCopy := make([]*Subscription, len(subs))
 	copy(subsCopy, subs)
 	return subsCopy
 }
