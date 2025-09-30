@@ -39,6 +39,8 @@ type Publish struct {
 	QoS byte
 	// Retain indicates whether this is a retained message.
 	Retain bool
+	// UserProperties contains MQTT 5.0 user-defined properties
+	UserProperties map[string][]byte
 }
 
 // Session is an actor that manages the state and network connection for a single
@@ -94,8 +96,19 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 					Qos:    m.QoS,
 					Retain: m.Retain,
 				},
-				TopicName:   m.Topic,
-				Payload:     m.Payload,
+				TopicName:       m.Topic,
+				Payload:         m.Payload,
+				ProtocolVersion: 5, // Enable MQTT 5.0 for user properties support
+			}
+
+			// Add MQTT 5.0 user properties if present
+			if len(m.UserProperties) > 0 {
+				for key, value := range m.UserProperties {
+					pk.Properties.User = append(pk.Properties.User, packets.UserProperty{
+						Key: key,
+						Val: string(value),
+					})
+				}
 			}
 
 			// QoS 1 and QoS 2 require a packet ID for acknowledgments
