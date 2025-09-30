@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX Go Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="/connections">Connections</a>
+                    <a href="/sessions">Sessions</a>
+                    <a href="/subscriptions">Subscriptions</a>
+                    <a href="/monitoring" class="active">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, admin</span>
+                    <a href="/logout" class="btn btn-small">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">System Monitoring</h1>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <label>
+                        <input type="checkbox" id="auto-refresh" checked> Auto Refresh (5s)
+                    </label>
+                    <button id="refresh-btn" class="btn btn-primary btn-small">Refresh</button>
+                    <span style="font-size: 0.9rem; color: #666;">Last updated: {{.CurrentTime}}</span>
+                </div>
+            </div>
+
+            <!-- System Health -->
+            <div class="card" style="margin-bottom: 2rem;">
+                <div class="card-header">
+                    <h2 class="card-title">System Health</h2>
+                    <span class="status {{if eq .Health.Status "healthy"}}online{{else}}offline{{end}}" id="health-status">
+                        {{if eq .Health.Status "healthy"}}Healthy{{else}}Unhealthy{{end}}
+                    </span>
+                </div>
+                <div class="card-content">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1.5rem;">
+                        <div>
+                            <h4>System Info</h4>
+                            <div style="font-size: 0.9rem; line-height: 1.8;">
+                                <div><strong>OS:</strong> {{.Health.SystemInfo.OSInfo.OS}}</div>
+                                <div><strong>Arch:</strong> {{.Health.SystemInfo.OSInfo.Arch}}</div>
+                                <div><strong>CPUs:</strong> {{.Health.SystemInfo.OSInfo.NumCPU}}</div>
+                                <div><strong>Go Version:</strong> {{.Health.SystemInfo.OSInfo.Version}}</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Message Statistics -->
+            <div class="card" style="margin-bottom: 2rem;">
+                <div class="card-header">
+                    <h2 class="card-title">Message Statistics</h2>
+                </div>
+                <div class="card-content">
+                    <div class="dashboard-grid">
+                        <div class="metric-card">
+                            <div class="metric-title">Messages Received</div>
+                            <div class="metric-value" id="messages-received">{{.Stats.Messages.Received}}</div>
+                            <div class="metric-change">
+                                QoS0: {{.Stats.Messages.Qos0}} | QoS1: {{.Stats.Messages.Qos1}} | QoS2: {{.Stats.Messages.Qos2}}
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-title">Messages Sent</div>
+                            <div class="metric-value" id="messages-sent">{{.Stats.Messages.Sent}}</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-title">Messages Dropped</div>
+                            <div class="metric-value" id="messages-dropped">{{.Stats.Messages.Dropped}}</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-title">Retained Messages</div>
+                            <div class="metric-value">{{.Stats.Messages.Retained}}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

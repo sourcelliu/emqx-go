@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX Go Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="/connections" class="active">Connections</a>
+                    <a href="/sessions">Sessions</a>
+                    <a href="/subscriptions">Subscriptions</a>
+                    <a href="/monitoring">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, admin</span>
+                    <a href="/logout" class="btn btn-small">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">Connection Management</h1>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <label>
+                        <input type="checkbox" id="auto-refresh" checked> Auto Refresh (5s)
+                    </label>
+                    <button id="refresh-btn" class="btn btn-primary btn-small">Refresh</button>
+                    <span style="font-size: 0.9rem; color: #666;">Total: {{.ConnectionCount}} connections</span>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="dashboard-grid" style="margin-bottom: 2rem;">
+                <div class="metric-card">
+                    <div class="metric-title">Total Connections</div>
+                    <div class="metric-value" id="connections-count">{{.ConnectionCount}}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Online</div>
+                    <div class="metric-value" id="connections-online">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Offline</div>
+                    <div class="metric-value" id="connections-offline">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Clean Sessions</div>
+                    <div class="metric-value" id="connections-clean">0</div>
+                </div>
+            </div>
+
+            <!-- Connections Table -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Active Connections</h2>
+                    <div style="display: flex; gap: 1rem; align-items: center;">
+                        <input type="search" placeholder="Search by Client ID or Username..."
+                               style="padding: 0.5rem; border: 1px solid #d9d9d9; border-radius: 4px; width: 300px;">
+                        <button class="btn btn-primary btn-small">Search</button>
+                    </div>
+                </div>
+                <div class="card-content">
+                    <div style="overflow-x: auto;">
+                        <table class="table" id="connections-table">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Username</th>
+                                    <th>IP Address</th>
+                                    <th>Port</th>
+                                    <th>Status</th>
+                                    <th>Connected At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{if .Connections}}
+                                {{range .Connections}}
+                                <tr>
+                                    <td>{{.ClientID}}</td>
+                                    <td>{{.Username}}</td>
+                                    <td>{{.PeerHost}}</td>
+                                    <td>{{.SockPort}}</td>
+                                    <td><span class="status online">Connected</span></td>
+                                    <td>{{.ConnectedAt}}</td>
+                                    <td>
+                                        <button class="btn btn-danger btn-small disconnect-btn" data-client-id="{{.ClientID}}">
+                                            Disconnect
+                                        </button>
+                                    </td>
+                                </tr>
+                                {{end}}
+                                {{else}}
+                                <tr>
+                                    <td colspan="7" style="text-align: center; color: #666; padding: 2rem;">
+                                        No active connections found
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/dashboard.js"></script>
+    <script>
+    // Connection-specific JavaScript
+    function showConnectionDetails(clientId) {
+        fetch(`/api/v5/connections/${encodeURIComponent(clientId)}`)
+            .then(response => response.json())
+            .then(data => {
+                console.log('Connection details:', data);
+            })
+            .catch(error => {
+                console.error('Failed to fetch connection details:', error);
+            });
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const rows = document.querySelectorAll('#connections-table tbody tr');
+        rows.forEach(row => {
+            const clientId = row.querySelector('td:first-child')?.textContent;
+            if (clientId && clientId.trim() !== 'No active connections found') {
+                row.style.cursor = 'pointer';
+                row.addEventListener('click', function(e) {
+                    if (!e.target.classList.contains('disconnect-btn')) {
+                        showConnectionDetails(clientId);
+                    }
+                });
+            }
+        });
+    });
+    </script>
+</body>
+</html>
