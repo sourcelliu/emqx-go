@@ -101,6 +101,9 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 		offlineMessageMgr:    offlineMgr,
 	}
 
+	// Set will message publisher to integrate with broker's publish mechanism
+	sessionMgr.SetWillMessagePublisher(&willMessagePublisher{broker: b})
+
 	if clusterMgr != nil {
 		// Set the callback for the cluster manager to publish locally
 		clusterMgr.LocalPublishFunc = b.RouteToLocalSubscribers
@@ -911,5 +914,45 @@ func (b *Broker) Close() error {
 	}
 
 	log.Printf("[INFO] Broker shutdown complete")
+	return nil
+}
+
+// willMessagePublisher implements the WillMessagePublisher interface for broker integration
+type willMessagePublisher struct {
+	broker *Broker
+}
+
+// PublishWillMessage publishes a will message through the broker's routing system
+func (wmp *willMessagePublisher) PublishWillMessage(ctx context.Context, willMsg *persistent.WillMessage, clientID string) error {
+	if wmp.broker == nil {
+		return fmt.Errorf("broker is nil")
+	}
+
+	if willMsg == nil {
+		return fmt.Errorf("will message is nil")
+	}
+
+	log.Printf("[INFO] Publishing will message from client %s: topic=%s, qos=%d, retain=%t, payload_size=%d",
+		clientID, willMsg.Topic, willMsg.QoS, willMsg.Retain, len(willMsg.Payload))
+
+	// Handle retained will messages
+	if willMsg.Retain {
+		if err := wmp.broker.retainer.StoreRetained(ctx, willMsg.Topic, willMsg.Payload, willMsg.QoS, clientID); err != nil {
+			log.Printf("[ERROR] Failed to store retained will message: %v", err)
+		} else {
+			log.Printf("[INFO] Stored retained will message for topic %s", willMsg.Topic)
+		}
+	}
+
+	// Route the will message to subscribers
+	wmp.broker.routePublish(willMsg.Topic, willMsg.Payload, willMsg.QoS)
+
+	// Queue will message for offline subscribers
+	matcher := &persistent.BasicTopicMatcher{}
+	if err := wmp.broker.offlineMessageMgr.QueueMessageForOfflineClients(willMsg.Topic, willMsg.Payload, willMsg.QoS, willMsg.Retain, matcher); err != nil {
+		log.Printf("[ERROR] Failed to queue will message for offline clients: %v", err)
+	}
+
+	log.Printf("[INFO] Successfully published will message from client %s to topic %s", clientID, willMsg.Topic)
 	return nil
 }
