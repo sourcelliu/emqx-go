@@ -44,6 +44,10 @@ type Publish struct {
 	UserProperties map[string][]byte
 	// TopicAlias contains MQTT 5.0 topic alias for this message (0 means no alias)
 	TopicAlias uint16
+	// ResponseTopic contains MQTT 5.0 response topic for request-response pattern
+	ResponseTopic string
+	// CorrelationData contains MQTT 5.0 correlation data for request-response pattern
+	CorrelationData []byte
 }
 
 // Session is an actor that manages the state and network connection for a single
@@ -184,6 +188,14 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 						Val: string(value),
 					})
 				}
+			}
+
+			// Add MQTT 5.0 request-response properties if present
+			if m.ResponseTopic != "" {
+				pk.Properties.ResponseTopic = m.ResponseTopic
+			}
+			if len(m.CorrelationData) > 0 {
+				pk.Properties.CorrelationData = m.CorrelationData
 			}
 
 			// QoS 1 and QoS 2 require a packet ID for acknowledgments
