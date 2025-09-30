@@ -27,12 +27,14 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/turtacn/emqx-go/pkg/actor"
 	"github.com/turtacn/emqx-go/pkg/auth"
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/metrics"
+	"github.com/turtacn/emqx-go/pkg/persistent"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 	"github.com/turtacn/emqx-go/pkg/retainer"
 	"github.com/turtacn/emqx-go/pkg/session"
@@ -53,6 +55,11 @@ type Broker struct {
 	nodeID    string
 	authChain *auth.AuthChain
 	retainer  *retainer.Retainer
+
+	// Persistent session management
+	persistentSessionMgr *persistent.SessionManager
+	offlineMessageMgr    *persistent.OfflineMessageManager
+
 	mu        sync.RWMutex
 }
 
@@ -74,15 +81,26 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	// Create retainer with default config
 	ret := retainer.New(msgStorage.GetBackend(), retainer.DefaultConfig())
 
+	// Create persistent session manager
+	persistentStore := storage.NewMemStore()
+	persistentConfig := persistent.DefaultConfig()
+	sessionMgr := persistent.NewSessionManager(persistentStore, persistentConfig)
+
+	// Create offline message manager
+	offlineMgr := persistent.NewOfflineMessageManager(sessionMgr)
+
 	b := &Broker{
-		sup:       supervisor.NewOneForOneSupervisor(),
-		sessions:  storage.NewMemStore(),
-		topics:    topic.NewStore(),
-		cluster:   clusterMgr,
-		nodeID:    nodeID,
-		authChain: auth.NewAuthChain(),
-		retainer:  ret,
+		sup:                  supervisor.NewOneForOneSupervisor(),
+		sessions:             storage.NewMemStore(),
+		topics:               topic.NewStore(),
+		cluster:              clusterMgr,
+		nodeID:               nodeID,
+		authChain:            auth.NewAuthChain(),
+		retainer:             ret,
+		persistentSessionMgr: sessionMgr,
+		offlineMessageMgr:    offlineMgr,
 	}
+
 	if clusterMgr != nil {
 		// Set the callback for the cluster manager to publish locally
 		clusterMgr.LocalPublishFunc = b.RouteToLocalSubscribers
@@ -146,6 +164,33 @@ func (b *Broker) StartServer(ctx context.Context, addr string) error {
 	return nil
 }
 
+// deliverOfflineMessage delivers an offline message to a reconnected client
+func (b *Broker) deliverOfflineMessage(clientID, topic string, payload []byte, qos byte, retain bool) error {
+	b.mu.RLock()
+	sessionInterface, exists := b.sessions.Get(clientID)
+	b.mu.RUnlock()
+
+	if exists != nil {
+		return fmt.Errorf("session not found for client %s", clientID)
+	}
+
+	sessionMailbox, ok := sessionInterface.(*actor.Mailbox)
+	if !ok {
+		return fmt.Errorf("invalid session type for client %s", clientID)
+	}
+
+	msg := session.Publish{
+		Topic:   topic,
+		Payload: payload,
+		QoS:     qos,
+		Retain:  retain,
+	}
+
+	sessionMailbox.Send(msg)
+	log.Printf("[INFO] Delivered offline message to client %s: topic=%s", clientID, topic)
+	return nil
+}
+
 // handleConnection manages a single client connection.
 func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	metrics.ConnectionsTotal.Inc()
@@ -158,10 +203,12 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	var connLoopErr error
 	for {
 		log.Printf("[DEBUG] About to read packet from %s (clientID: %s)", conn.RemoteAddr(), clientID)
 		pk, err := readPacket(reader)
 		if err != nil {
+			connLoopErr = err
 			log.Printf("[DEBUG] Error reading packet from %s (clientID: %s): %v", conn.RemoteAddr(), clientID, err)
 			if err != io.EOF {
 				// Enhanced error handling for protocol violations
@@ -188,8 +235,11 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 		switch pk.FixedHeader.Type {
 		case packets.Connect:
 			clientID = pk.Connect.ClientIdentifier
+			cleanSession := pk.Connect.Clean
+			keepAlive := time.Duration(pk.Connect.Keepalive) * time.Second
+
 			log.Printf("[DEBUG] CONNECT packet received from %s - ClientID: '%s'", conn.RemoteAddr(), clientID)
-			log.Printf("[DEBUG] CONNECT details - CleanSession: %t, KeepAlive: %d", pk.Connect.Clean, pk.Connect.Keepalive)
+			log.Printf("[DEBUG] CONNECT details - CleanSession: %t, KeepAlive: %d", cleanSession, pk.Connect.Keepalive)
 
 			if clientID == "" {
 				log.Printf("[ERROR] CONNECT from %s has empty client ID. Closing connection.", conn.RemoteAddr())
@@ -252,11 +302,67 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			// Authentication successful, register session
+			// Handle persistent session creation/resumption
+			var sessionExpiry time.Duration
+			if keepAlive > 0 {
+				sessionExpiry = keepAlive * 2 // Default to 2x keepalive
+			} else {
+				sessionExpiry = 24 * time.Hour // Default to 24 hours
+			}
+
+			// Create or resume persistent session
+			persistentSession, err := b.persistentSessionMgr.CreateOrResumeSession(clientID, cleanSession, sessionExpiry)
+			if err != nil {
+				log.Printf("[ERROR] Failed to create/resume persistent session for %s: %v", clientID, err)
+				return
+			}
+
+			// Check if we should deliver offline messages (before setting callbacks)
+			shouldDeliverOffline := !cleanSession && len(persistentSession.MessageQueue) > 0
+
+			// Handle will message if present
+			if pk.Connect.WillFlag {
+				willTopic := pk.Connect.WillTopic
+				willPayload := pk.Connect.WillPayload
+				willQoS := pk.Connect.WillQos
+				willRetain := pk.Connect.WillRetain
+
+				err = b.persistentSessionMgr.SetWillMessage(clientID, willTopic, willPayload, willQoS, willRetain, 0)
+				if err != nil {
+					log.Printf("[ERROR] Failed to set will message for %s: %v", clientID, err)
+				} else {
+					log.Printf("[INFO] Set will message for client %s: topic=%s", clientID, willTopic)
+				}
+			}
+
+			// Register session for actor management
 			log.Printf("[DEBUG] Registering session for client %s", clientID)
 			sessionMailbox = b.registerSession(connCtx, clientID, conn)
 			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", clientID, sessionMailbox)
-			log.Printf("[INFO] Client %s connected successfully with user: %s", clientID, username)
+
+			// Set delivery callback for this specific client
+			b.offlineMessageMgr.SetDeliveryCallback(clientID, b.deliverOfflineMessage)
+
+			// If this is a persistent session resumption, restore subscriptions to topic store
+			if !cleanSession && len(persistentSession.Subscriptions) > 0 {
+				log.Printf("[DEBUG] Restoring %d subscriptions for persistent session %s", len(persistentSession.Subscriptions), clientID)
+				for topic, qos := range persistentSession.Subscriptions {
+					b.topics.Subscribe(topic, sessionMailbox, qos)
+					log.Printf("[DEBUG] Restored subscription: Client=%s, Topic=%s, QoS=%d", clientID, topic, qos)
+				}
+			}
+
+			// Deliver offline messages if this is a reconnection
+			if shouldDeliverOffline {
+				go func() {
+					time.Sleep(100 * time.Millisecond) // Brief delay to ensure session is fully established
+					if err := b.offlineMessageMgr.DeliverOfflineMessages(clientID); err != nil {
+						log.Printf("[ERROR] Failed to deliver offline messages to %s: %v", clientID, err)
+					}
+				}()
+			}
+
+			log.Printf("[INFO] Client %s connected successfully with user: %s (cleanSession: %t)", clientID, username, cleanSession)
 
 		case packets.Subscribe:
 			log.Printf("[DEBUG] SUBSCRIBE packet received from client %s (remote: %s)", clientID, conn.RemoteAddr())
@@ -292,8 +398,13 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 				log.Printf("[DEBUG] Storing subscription: Client=%s, Topic=%s, GrantedQoS=%d", clientID, sub.Filter, grantedQoS)
 
-				// Store subscription with validated QoS level
+				// Store subscription in topic store for routing
 				b.topics.Subscribe(sub.Filter, sessionMailbox, grantedQoS)
+
+				// Store subscription in persistent session
+				if err := b.persistentSessionMgr.AddSubscription(clientID, sub.Filter, grantedQoS); err != nil {
+					log.Printf("[ERROR] Failed to add persistent subscription for %s: %v", clientID, err)
+				}
 
 				log.Printf("[INFO] Client %s successfully subscribed to '%s' with QoS %d", clientID, sub.Filter, grantedQoS)
 
@@ -345,6 +456,9 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				publishQoS = 2
 			}
 
+			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, qos=%d, retain=%t, payload_size=%d",
+				clientID, pk.TopicName, publishQoS, pk.FixedHeader.Retain, len(pk.Payload))
+
 			// Handle retained messages
 			if pk.FixedHeader.Retain {
 				log.Printf("[DEBUG] PUBLISH with RETAIN flag from client %s to topic %s", clientID, pk.TopicName)
@@ -358,6 +472,12 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 			// Route the published message to subscribers
 			b.routePublish(pk.TopicName, pk.Payload, publishQoS)
+
+			// Queue message for offline subscribers
+			matcher := &persistent.BasicTopicMatcher{}
+			if err := b.offlineMessageMgr.QueueMessageForOfflineClients(pk.TopicName, pk.Payload, publishQoS, pk.FixedHeader.Retain, matcher); err != nil {
+				log.Printf("[ERROR] Failed to queue message for offline clients: %v", err)
+			}
 
 			// Send acknowledgment back to publisher based on QoS level
 			if publishQoS == 1 {
@@ -411,6 +531,12 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 		case packets.Disconnect:
 			log.Printf("Client %s sent DISCONNECT.", clientID)
+			// Handle graceful disconnect for persistent sessions
+			if err := b.persistentSessionMgr.DisconnectSession(clientID, true); err != nil {
+				log.Printf("[ERROR] Failed to handle graceful disconnect for %s: %v", clientID, err)
+			}
+			// Remove delivery callback
+			b.offlineMessageMgr.RemoveDeliveryCallback(clientID)
 			// A clean disconnect means we should break the loop and proceed
 			// to the cleanup code below.
 			goto end_loop
@@ -420,6 +546,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 		}
 
 		if err != nil {
+			connLoopErr = err
 			log.Printf("Error handling packet for %s: %v", clientID, err)
 			return
 		}
@@ -427,8 +554,21 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 end_loop:
 
 	if clientID != "" {
+		// Check if this was an unexpected disconnection (not graceful)
+		// If there was an error in the loop, this might trigger will message
+		isGracefulDisconnect := connLoopErr == nil || connLoopErr == io.EOF
+
+		// Handle disconnection for persistent sessions
+		if disconnectErr := b.persistentSessionMgr.DisconnectSession(clientID, isGracefulDisconnect); disconnectErr != nil {
+			log.Printf("[ERROR] Failed to handle disconnect for %s: %v", clientID, disconnectErr)
+		}
+
+		// Remove delivery callback
+		b.offlineMessageMgr.RemoveDeliveryCallback(clientID)
+
+		// Unregister from actor system
 		b.unregisterSession(clientID)
-		log.Printf("Client %s disconnected.", clientID)
+		log.Printf("Client %s disconnected (graceful: %t).", clientID, isGracefulDisconnect)
 	}
 }
 
@@ -757,4 +897,19 @@ func (b *Broker) sendRetainedMessages(sessionMailbox *actor.Mailbox, filters []p
 				retainedMsg.Topic, len(retainedMsg.Payload), effectiveQoS)
 		}
 	}
+}
+
+// Close shuts down the broker and cleans up resources
+func (b *Broker) Close() error {
+	log.Printf("[INFO] Shutting down broker...")
+
+	// Close persistent session manager
+	if b.persistentSessionMgr != nil {
+		if err := b.persistentSessionMgr.Close(); err != nil {
+			log.Printf("[ERROR] Failed to close persistent session manager: %v", err)
+		}
+	}
+
+	log.Printf("[INFO] Broker shutdown complete")
+	return nil
 }
