@@ -23,6 +23,7 @@ import (
 	"context"
 	"io"
 	"log"
+	"sync"
 
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/turtacn/emqx-go/pkg/actor"
@@ -41,6 +42,8 @@ type Publish struct {
 	Retain bool
 	// UserProperties contains MQTT 5.0 user-defined properties
 	UserProperties map[string][]byte
+	// TopicAlias contains MQTT 5.0 topic alias for this message (0 means no alias)
+	TopicAlias uint16
 }
 
 // Session is an actor that manages the state and network connection for a single
@@ -52,6 +55,12 @@ type Session struct {
 	// Client ID.
 	ID   string
 	conn io.Writer
+
+	// Topic alias management for MQTT 5.0
+	mu                      sync.RWMutex
+	brokerToClientAliases   map[uint16]string    // alias -> topic mapping for outbound messages
+	nextBrokerAlias         uint16               // next alias number to assign
+	topicAliasMaximum       uint16               // maximum topic alias value supported
 }
 
 // New creates a new Session instance.
@@ -60,9 +69,51 @@ type Session struct {
 // - conn: The I/O writer for the client's network connection.
 func New(id string, conn io.Writer) *Session {
 	return &Session{
-		ID:   id,
-		conn: conn,
+		ID:                    id,
+		conn:                  conn,
+		brokerToClientAliases: make(map[uint16]string),
+		nextBrokerAlias:       1,
+		topicAliasMaximum:     65535, // Default maximum topic alias value
 	}
+}
+
+// SetTopicAliasMaximum sets the maximum topic alias value for this session
+func (s *Session) SetTopicAliasMaximum(maximum uint16) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.topicAliasMaximum = maximum
+}
+
+// GetTopicAliasMaximum returns the maximum topic alias value for this session
+func (s *Session) GetTopicAliasMaximum() uint16 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.topicAliasMaximum
+}
+
+// assignTopicAlias assigns a new topic alias for the given topic
+// Returns the alias number and whether a new alias was assigned
+func (s *Session) assignTopicAlias(topic string) (uint16, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check if we've reached the maximum
+	if s.nextBrokerAlias > s.topicAliasMaximum {
+		return 0, false
+	}
+
+	// Check if this topic already has an alias
+	for alias, existingTopic := range s.brokerToClientAliases {
+		if existingTopic == topic {
+			return alias, false // Return existing alias
+		}
+	}
+
+	// Assign a new alias
+	alias := s.nextBrokerAlias
+	s.brokerToClientAliases[alias] = topic
+	s.nextBrokerAlias++
+	return alias, true
 }
 
 // Start is the entry point and main loop for the Session actor. It conforms to
@@ -98,7 +149,31 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 				},
 				TopicName:       m.Topic,
 				Payload:         m.Payload,
-				ProtocolVersion: 5, // Enable MQTT 5.0 for user properties support
+				ProtocolVersion: 5, // Enable MQTT 5.0 for topic aliases and user properties support
+			}
+
+			// Handle topic aliases for MQTT 5.0
+			var useTopicAlias bool
+			var topicAlias uint16
+
+			if m.TopicAlias > 0 {
+				// Use the provided topic alias
+				topicAlias = m.TopicAlias
+				useTopicAlias = true
+
+				// If topic alias is provided with empty topic, use alias only
+				if m.Topic == "" {
+					pk.TopicName = ""
+				}
+			}
+			// Note: Automatic topic alias assignment is disabled for now to maintain
+			// compatibility. The broker can still assign aliases by setting TopicAlias
+			// in the Publish message explicitly.
+
+			// Set topic alias in properties if we're using one
+			if useTopicAlias {
+				pk.Properties.TopicAlias = topicAlias
+				pk.Properties.TopicAliasFlag = true
 			}
 
 			// Add MQTT 5.0 user properties if present

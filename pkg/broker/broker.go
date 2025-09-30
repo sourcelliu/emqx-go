@@ -60,7 +60,60 @@ type Broker struct {
 	persistentSessionMgr *persistent.SessionManager
 	offlineMessageMgr    *persistent.OfflineMessageManager
 
+	// Topic alias management for MQTT 5.0
+	topicAliasManagers map[string]*ClientTopicAliasManager
+
 	mu        sync.RWMutex
+}
+
+// ClientTopicAliasManager manages topic aliases for a single client session
+type ClientTopicAliasManager struct {
+	mu                      sync.RWMutex
+	clientToServerAliases   map[uint16]string // alias -> topic mapping for inbound messages
+	topicAliasMaximum       uint16            // maximum topic alias value supported by server
+}
+
+// newClientTopicAliasManager creates a new topic alias manager for a client
+func newClientTopicAliasManager(maxAliases uint16) *ClientTopicAliasManager {
+	return &ClientTopicAliasManager{
+		clientToServerAliases: make(map[uint16]string),
+		topicAliasMaximum:     maxAliases,
+	}
+}
+
+// resolveTopicAlias resolves a topic alias to topic name or establishes new mapping
+func (tam *ClientTopicAliasManager) resolveTopicAlias(topicName string, alias uint16) (string, error) {
+	tam.mu.Lock()
+	defer tam.mu.Unlock()
+
+	if alias == 0 {
+		// No alias used, return the topic name as-is
+		return topicName, nil
+	}
+
+	if alias > tam.topicAliasMaximum {
+		return "", fmt.Errorf("topic alias %d exceeds maximum %d", alias, tam.topicAliasMaximum)
+	}
+
+	if topicName != "" {
+		// Establish new mapping: alias -> topic
+		tam.clientToServerAliases[alias] = topicName
+		return topicName, nil
+	}
+
+	// Topic name is empty, use existing mapping
+	if resolvedTopic, exists := tam.clientToServerAliases[alias]; exists {
+		return resolvedTopic, nil
+	}
+
+	return "", fmt.Errorf("topic alias %d has no established mapping", alias)
+}
+
+// getTopicAliasMaximum returns the maximum topic alias value
+func (tam *ClientTopicAliasManager) getTopicAliasMaximum() uint16 {
+	tam.mu.RLock()
+	defer tam.mu.RUnlock()
+	return tam.topicAliasMaximum
 }
 
 // New creates and initializes a new Broker instance.
@@ -99,6 +152,7 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 		retainer:             ret,
 		persistentSessionMgr: sessionMgr,
 		offlineMessageMgr:    offlineMgr,
+		topicAliasManagers:   make(map[string]*ClientTopicAliasManager),
 	}
 
 	// Set will message publisher to integrate with broker's publish mechanism
@@ -293,6 +347,14 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				ReasonCode:  connackCode,
 			}
 
+			// Set MQTT 5.0 properties in CONNACK if authentication succeeded
+			if connackCode == packets.CodeSuccess.Code {
+				// Set Topic Alias Maximum for MQTT 5.0 support
+				resp.Properties.TopicAliasMaximum = 100 // Allow up to 100 topic aliases
+				resp.Properties.TopicAliasFlag = true
+				resp.ProtocolVersion = 5
+			}
+
 			log.Printf("[DEBUG] Sending CONNACK to client %s with reason code: 0x%02x", clientID, connackCode)
 			err = writePacket(conn, &resp)
 			if err != nil {
@@ -343,6 +405,12 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			log.Printf("[DEBUG] Registering session for client %s", clientID)
 			sessionMailbox = b.registerSession(connCtx, clientID, conn)
 			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", clientID, sessionMailbox)
+
+			// Create topic alias manager for this client (MQTT 5.0)
+			b.mu.Lock()
+			b.topicAliasManagers[clientID] = newClientTopicAliasManager(100) // Allow up to 100 aliases
+			b.mu.Unlock()
+			log.Printf("[DEBUG] Topic alias manager created for client %s", clientID)
 
 			// Set delivery callback for this specific client
 			b.offlineMessageMgr.SetDeliveryCallback(clientID, b.deliverOfflineMessage)
@@ -460,6 +528,37 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				publishQoS = 2
 			}
 
+			// Handle MQTT 5.0 topic aliases
+			var resolvedTopic string
+			var topicAliasErr error
+
+			if pk.Properties.TopicAliasFlag && pk.Properties.TopicAlias > 0 {
+				// Client is using topic alias
+				b.mu.RLock()
+				topicAliasManager := b.topicAliasManagers[clientID]
+				b.mu.RUnlock()
+
+				if topicAliasManager != nil {
+					resolvedTopic, topicAliasErr = topicAliasManager.resolveTopicAlias(pk.TopicName, pk.Properties.TopicAlias)
+					if topicAliasErr != nil {
+						log.Printf("[ERROR] Topic alias resolution failed for client %s: %v", clientID, topicAliasErr)
+						// Send DISCONNECT with protocol error
+						resp := packets.Packet{
+							FixedHeader: packets.FixedHeader{Type: packets.Disconnect},
+							ReasonCode:  0x82, // Protocol Error
+						}
+						writePacket(conn, &resp)
+						return
+					}
+					log.Printf("[DEBUG] Resolved topic alias %d to topic '%s' for client %s", pk.Properties.TopicAlias, resolvedTopic, clientID)
+				} else {
+					resolvedTopic = pk.TopicName
+					log.Printf("[WARN] No topic alias manager for client %s, using topic name directly", clientID)
+				}
+			} else {
+				resolvedTopic = pk.TopicName
+			}
+
 			// Extract MQTT 5.0 user properties if present
 			var userProperties map[string][]byte
 			if len(pk.Properties.User) > 0 {
@@ -470,26 +569,26 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Printf("[DEBUG] PUBLISH with %d user properties from client %s", len(pk.Properties.User), clientID)
 			}
 
-			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, qos=%d, retain=%t, payload_size=%d, user_props=%d",
-				clientID, pk.TopicName, publishQoS, pk.FixedHeader.Retain, len(pk.Payload), len(userProperties))
+			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, resolved_topic=%s, qos=%d, retain=%t, payload_size=%d, user_props=%d, topic_alias=%d",
+				clientID, pk.TopicName, resolvedTopic, publishQoS, pk.FixedHeader.Retain, len(pk.Payload), len(userProperties), pk.Properties.TopicAlias)
 
 			// Handle retained messages
 			if pk.FixedHeader.Retain {
-				log.Printf("[DEBUG] PUBLISH with RETAIN flag from client %s to topic %s", clientID, pk.TopicName)
+				log.Printf("[DEBUG] PUBLISH with RETAIN flag from client %s to topic %s", clientID, resolvedTopic)
 				ctx := context.Background()
-				if err := b.retainer.StoreRetained(ctx, pk.TopicName, pk.Payload, publishQoS, clientID); err != nil {
+				if err := b.retainer.StoreRetained(ctx, resolvedTopic, pk.Payload, publishQoS, clientID); err != nil {
 					log.Printf("[ERROR] Failed to store retained message: %v", err)
 				} else {
-					log.Printf("[INFO] Stored retained message for topic %s (payload size: %d)", pk.TopicName, len(pk.Payload))
+					log.Printf("[INFO] Stored retained message for topic %s (payload size: %d)", resolvedTopic, len(pk.Payload))
 				}
 			}
 
 			// Route the published message to subscribers with user properties
-			b.routePublishWithUserProperties(pk.TopicName, pk.Payload, publishQoS, userProperties)
+			b.routePublishWithUserProperties(resolvedTopic, pk.Payload, publishQoS, userProperties)
 
 			// Queue message for offline subscribers
 			matcher := &persistent.BasicTopicMatcher{}
-			if err := b.offlineMessageMgr.QueueMessageForOfflineClients(pk.TopicName, pk.Payload, publishQoS, pk.FixedHeader.Retain, matcher); err != nil {
+			if err := b.offlineMessageMgr.QueueMessageForOfflineClients(resolvedTopic, pk.Payload, publishQoS, pk.FixedHeader.Retain, matcher); err != nil {
 				log.Printf("[ERROR] Failed to queue message for offline clients: %v", err)
 			}
 
@@ -551,6 +650,10 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			}
 			// Remove delivery callback
 			b.offlineMessageMgr.RemoveDeliveryCallback(clientID)
+			// Clean up topic alias manager
+			b.mu.Lock()
+			delete(b.topicAliasManagers, clientID)
+			b.mu.Unlock()
 			// A clean disconnect means we should break the loop and proceed
 			// to the cleanup code below.
 			goto end_loop
@@ -579,6 +682,12 @@ end_loop:
 
 		// Remove delivery callback
 		b.offlineMessageMgr.RemoveDeliveryCallback(clientID)
+
+		// Clean up topic alias manager
+		b.mu.Lock()
+		delete(b.topicAliasManagers, clientID)
+		b.mu.Unlock()
+		log.Printf("[DEBUG] Topic alias manager removed for client %s", clientID)
 
 		// Unregister from actor system
 		b.unregisterSession(clientID)
