@@ -21,6 +21,10 @@ go.work
 bin/
 dist/
 
+# Built executables
+emqx-go
+dashboard-demo
+
 # Log files
 *.log
 emqx_service.log
