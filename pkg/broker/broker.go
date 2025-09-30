@@ -352,6 +352,14 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				// Set Topic Alias Maximum for MQTT 5.0 support
 				resp.Properties.TopicAliasMaximum = 100 // Allow up to 100 topic aliases
 				resp.Properties.TopicAliasFlag = true
+
+				// Handle Request Response Information if requested
+				if pk.Properties.RequestResponseInfo == 1 {
+					// Provide response information for request-response pattern
+					resp.Properties.ResponseInfo = fmt.Sprintf("response-info://%s/response/", b.nodeID)
+					log.Printf("[DEBUG] Set response info for client %s: %s", clientID, resp.Properties.ResponseInfo)
+				}
+
 				resp.ProtocolVersion = 5
 			}
 
@@ -569,8 +577,20 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Printf("[DEBUG] PUBLISH with %d user properties from client %s", len(pk.Properties.User), clientID)
 			}
 
-			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, resolved_topic=%s, qos=%d, retain=%t, payload_size=%d, user_props=%d, topic_alias=%d",
-				clientID, pk.TopicName, resolvedTopic, publishQoS, pk.FixedHeader.Retain, len(pk.Payload), len(userProperties), pk.Properties.TopicAlias)
+			// Extract MQTT 5.0 request-response properties if present
+			var responseTopic string
+			var correlationData []byte
+			if pk.Properties.ResponseTopic != "" {
+				responseTopic = pk.Properties.ResponseTopic
+				log.Printf("[DEBUG] PUBLISH with response topic from client %s: %s", clientID, responseTopic)
+			}
+			if len(pk.Properties.CorrelationData) > 0 {
+				correlationData = pk.Properties.CorrelationData
+				log.Printf("[DEBUG] PUBLISH with correlation data from client %s: %d bytes", clientID, len(correlationData))
+			}
+
+			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, resolved_topic=%s, qos=%d, retain=%t, payload_size=%d, user_props=%d, topic_alias=%d, response_topic=%s",
+				clientID, pk.TopicName, resolvedTopic, publishQoS, pk.FixedHeader.Retain, len(pk.Payload), len(userProperties), pk.Properties.TopicAlias, responseTopic)
 
 			// Handle retained messages
 			if pk.FixedHeader.Retain {
@@ -583,8 +603,8 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				}
 			}
 
-			// Route the published message to subscribers with user properties
-			b.routePublishWithUserProperties(resolvedTopic, pk.Payload, publishQoS, userProperties)
+			// Route the published message to subscribers with request-response properties
+			b.routePublishWithRequestResponse(resolvedTopic, pk.Payload, publishQoS, userProperties, responseTopic, correlationData)
 
 			// Queue message for offline subscribers
 			matcher := &persistent.BasicTopicMatcher{}
@@ -743,6 +763,25 @@ func (b *Broker) routePublishWithUserProperties(topicName string, payload []byte
 	}
 }
 
+// routePublishWithRequestResponse sends a message with request-response properties to all local and remote subscribers of a topic.
+func (b *Broker) routePublishWithRequestResponse(topicName string, payload []byte, publishQoS byte, userProperties map[string][]byte, responseTopic string, correlationData []byte) {
+	// Route to local subscribers
+	b.RouteToLocalSubscribersWithRequestResponse(topicName, payload, publishQoS, userProperties, responseTopic, correlationData)
+
+	// Route to remote subscribers if clustering is enabled
+	if b.cluster != nil {
+		remoteSubscribers := b.cluster.GetRemoteSubscribers(topicName)
+		for _, nodeID := range remoteSubscribers {
+			// Avoid forwarding to self
+			if nodeID == b.nodeID {
+				continue
+			}
+			log.Printf("Forwarding message for topic '%s' to remote node %s", topicName, nodeID)
+			b.cluster.ForwardPublish(topicName, payload, nodeID)
+		}
+	}
+}
+
 // routePublish sends a message to all local and remote subscribers of a topic.
 func (b *Broker) routePublish(topicName string, payload []byte, publishQoS byte) {
 	// Route to local subscribers
@@ -787,6 +826,47 @@ func (b *Broker) RouteToLocalSubscribersWithUserProperties(topicName string, pay
 			Payload:        payload,
 			QoS:            effectiveQoS,
 			UserProperties: userProperties,
+		}
+		sub.Mailbox.Send(msg)
+	}
+}
+
+// RouteToLocalSubscribersWithRequestResponse delivers a message with request-response properties to all clients on the current node
+// that are subscribed to the given topic. It retrieves the list of subscribers
+// from the topic store and sends the message to each of their mailboxes.
+//
+// - topicName: The topic to which the message is published.
+// - payload: The message content.
+// - publishQoS: The QoS level of the published message.
+// - userProperties: MQTT 5.0 user-defined properties.
+// - responseTopic: MQTT 5.0 response topic for request-response pattern.
+// - correlationData: MQTT 5.0 correlation data for request-response pattern.
+func (b *Broker) RouteToLocalSubscribersWithRequestResponse(topicName string, payload []byte, publishQoS byte, userProperties map[string][]byte, responseTopic string, correlationData []byte) {
+	subscribers := b.topics.GetSubscribers(topicName)
+	if len(subscribers) > 0 {
+		logMsg := fmt.Sprintf("Routing message on topic '%s' to %d local subscribers (with %d user properties)", topicName, len(subscribers), len(userProperties))
+		if responseTopic != "" {
+			logMsg += fmt.Sprintf(", response_topic='%s'", responseTopic)
+		}
+		if len(correlationData) > 0 {
+			logMsg += fmt.Sprintf(", correlation_data=%d bytes", len(correlationData))
+		}
+		log.Printf("%s", logMsg)
+	}
+	for _, sub := range subscribers {
+		// Apply QoS downgrade rule: effective QoS = min(publish QoS, subscription QoS)
+		effectiveQoS := publishQoS
+		if sub.QoS < publishQoS {
+			effectiveQoS = sub.QoS
+		}
+
+		msg := session.Publish{
+			Topic:           topicName,
+			Payload:         payload,
+			QoS:             effectiveQoS,
+			UserProperties:  userProperties,
+			ResponseTopic:   responseTopic,
+			CorrelationData: correlationData,
 		}
 		sub.Mailbox.Send(msg)
 	}
