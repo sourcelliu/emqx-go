@@ -18,8 +18,8 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -352,24 +352,53 @@ func (mb *MemoryBackend) cleanupRoutine() {
 	}
 }
 
-// topicMatches checks if a topic matches a filter (simplified implementation)
+// topicMatches checks if a topic matches a filter using MQTT wildcard rules
 func topicMatches(topic, filter string) bool {
-	// For now, support exact match and single-level wildcard (+)
-	if filter == topic {
+	// Exact match
+	if topic == filter {
 		return true
 	}
 
-	// Simple wildcard support
+	// Multi-level wildcard - # matches everything
 	if filter == "#" {
 		return true
 	}
 
-	// TODO: Implement full MQTT wildcard matching
-	matched, err := filepath.Match(filter, topic)
-	if err != nil {
+	// Split topic and filter into levels
+	topicLevels := strings.Split(topic, "/")
+	filterLevels := strings.Split(filter, "/")
+
+	// Multi-level wildcard at the end
+	if len(filterLevels) > 0 && filterLevels[len(filterLevels)-1] == "#" {
+		// Check that all preceding levels match
+		for i := 0; i < len(filterLevels)-1; i++ {
+			if i >= len(topicLevels) {
+				return false
+			}
+			if filterLevels[i] != "+" && filterLevels[i] != topicLevels[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Both must have same number of levels for single-level wildcards
+	if len(topicLevels) != len(filterLevels) {
 		return false
 	}
-	return matched
+
+	// Check each level
+	for i := 0; i < len(filterLevels); i++ {
+		if filterLevels[i] == "+" {
+			// Single-level wildcard matches any single level
+			continue
+		}
+		if filterLevels[i] != topicLevels[i] {
+			return false
+		}
+	}
+
+	return true
 }
 
 // Iterator implementation

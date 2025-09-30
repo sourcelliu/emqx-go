@@ -34,34 +34,46 @@ import (
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	"github.com/turtacn/emqx-go/pkg/retainer"
 	"github.com/turtacn/emqx-go/pkg/session"
 	"github.com/turtacn/emqx-go/pkg/storage"
+	"github.com/turtacn/emqx-go/pkg/storage/messages"
 	"github.com/turtacn/emqx-go/pkg/supervisor"
 	"github.com/turtacn/emqx-go/pkg/topic"
 )
 
 // Broker is the central component of the MQTT server. It acts as the main
 // supervisor for client sessions and handles the core logic of message routing,
-// session management, cluster communication, and authentication.
+// session management, cluster communication, authentication, and retained messages.
 type Broker struct {
-	sup      supervisor.Supervisor
-	sessions storage.Store
-	topics   *topic.Store
-	cluster  *cluster.Manager
-	nodeID   string
+	sup       supervisor.Supervisor
+	sessions  storage.Store
+	topics    *topic.Store
+	cluster   *cluster.Manager
+	nodeID    string
 	authChain *auth.AuthChain
-	mu       sync.RWMutex
+	retainer  *retainer.Retainer
+	mu        sync.RWMutex
 }
 
 // New creates and initializes a new Broker instance.
 //
-// It sets up the session store, topic store, supervisor, and authentication chain.
-// If a cluster manager is provided, it configures the broker to participate in a
-// cluster by setting the local publish callback.
+// It sets up the session store, topic store, supervisor, authentication chain,
+// and retained message manager. If a cluster manager is provided, it configures
+// the broker to participate in a cluster by setting the local publish callback.
 //
 // - nodeID: A unique identifier for this broker instance in the cluster.
 // - clusterMgr: A manager for cluster operations. Can be nil for a standalone broker.
 func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
+	// Create message storage for retained messages
+	msgStorage, err := messages.NewMessageStorage(messages.DefaultConfig())
+	if err != nil {
+		log.Fatalf("Failed to create message storage: %v", err)
+	}
+
+	// Create retainer with default config
+	ret := retainer.New(msgStorage.GetBackend(), retainer.DefaultConfig())
+
 	b := &Broker{
 		sup:       supervisor.NewOneForOneSupervisor(),
 		sessions:  storage.NewMemStore(),
@@ -69,6 +81,7 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 		cluster:   clusterMgr,
 		nodeID:    nodeID,
 		authChain: auth.NewAuthChain(),
+		retainer:  ret,
 	}
 	if clusterMgr != nil {
 		// Set the callback for the cluster manager to publish locally
@@ -146,8 +159,10 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	defer cancel()
 
 	for {
+		log.Printf("[DEBUG] About to read packet from %s (clientID: %s)", conn.RemoteAddr(), clientID)
 		pk, err := readPacket(reader)
 		if err != nil {
+			log.Printf("[DEBUG] Error reading packet from %s (clientID: %s): %v", conn.RemoteAddr(), clientID, err)
 			if err != io.EOF {
 				// Enhanced error handling for protocol violations
 				if strings.Contains(err.Error(), "qos out of range") {
@@ -167,6 +182,8 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			}
 			break
 		}
+
+		log.Printf("[DEBUG] Received packet type: %d from %s (clientID: %s)", pk.FixedHeader.Type, conn.RemoteAddr(), clientID)
 
 		switch pk.FixedHeader.Type {
 		case packets.Connect:
@@ -314,6 +331,9 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Printf("[ERROR] Failed to send SUBACK to client %s: %v", clientID, err)
 			} else {
 				log.Printf("[DEBUG] SUBACK sent successfully to client %s", clientID)
+
+				// Send retained messages for each subscription
+				go b.sendRetainedMessages(sessionMailbox, pk.Filters)
 			}
 
 		case packets.Publish:
@@ -323,6 +343,17 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Printf("Client %s attempted to publish with invalid QoS %d, downgrading to QoS 2",
 					clientID, pk.FixedHeader.Qos)
 				publishQoS = 2
+			}
+
+			// Handle retained messages
+			if pk.FixedHeader.Retain {
+				log.Printf("[DEBUG] PUBLISH with RETAIN flag from client %s to topic %s", clientID, pk.TopicName)
+				ctx := context.Background()
+				if err := b.retainer.StoreRetained(ctx, pk.TopicName, pk.Payload, publishQoS, clientID); err != nil {
+					log.Printf("[ERROR] Failed to store retained message: %v", err)
+				} else {
+					log.Printf("[INFO] Stored retained message for topic %s (payload size: %d)", pk.TopicName, len(pk.Payload))
+				}
 			}
 
 			// Route the published message to subscribers
@@ -682,4 +713,48 @@ func writePacket(w io.Writer, pk *packets.Packet) error {
 	}
 	_, err = w.Write(buf.Bytes())
 	return err
+}
+
+// sendRetainedMessages sends retained messages to a newly subscribed client
+func (b *Broker) sendRetainedMessages(sessionMailbox *actor.Mailbox, filters []packets.Subscription) {
+	if sessionMailbox == nil {
+		return
+	}
+
+	ctx := context.Background()
+	for _, filter := range filters {
+		log.Printf("[DEBUG] Checking retained messages for subscription filter: %s", filter.Filter)
+
+		// Get retained messages matching this filter
+		retainedMsgs, err := b.retainer.GetRetainedMessages(ctx, filter.Filter)
+		if err != nil {
+			log.Printf("[ERROR] Failed to get retained messages for filter %s: %v", filter.Filter, err)
+			continue
+		}
+
+		log.Printf("[DEBUG] Found %d retained messages for filter: %s", len(retainedMsgs), filter.Filter)
+
+		// Send each retained message to the subscriber
+		for _, retainedMsg := range retainedMsgs {
+			// Apply QoS downgrade rule: effective QoS = min(publish QoS, subscription QoS)
+			effectiveQoS := retainedMsg.QoS
+			if filter.Qos < retainedMsg.QoS {
+				effectiveQoS = filter.Qos
+			}
+
+			// Create session message
+			pubMsg := session.Publish{
+				Topic:   retainedMsg.Topic,
+				Payload: retainedMsg.Payload,
+				QoS:     effectiveQoS,
+				Retain:  true, // Mark as retained message
+			}
+
+			// Send to subscriber's mailbox
+			sessionMailbox.Send(pubMsg)
+
+			log.Printf("[INFO] Sent retained message to subscriber: topic=%s, payload_size=%d, qos=%d",
+				retainedMsg.Topic, len(retainedMsg.Payload), effectiveQoS)
+		}
+	}
 }

@@ -37,6 +37,8 @@ type Publish struct {
 	Payload []byte
 	// QoS is the Quality of Service level for the message.
 	QoS byte
+	// Retain indicates whether this is a retained message.
+	Retain bool
 }
 
 // Session is an actor that manages the state and network connection for a single
@@ -87,7 +89,11 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 			// When a Publish message is received, create an MQTT PUBLISH packet
 			// and write it to the client's connection.
 			pk := &packets.Packet{
-				FixedHeader: packets.FixedHeader{Type: packets.Publish, Qos: m.QoS},
+				FixedHeader: packets.FixedHeader{
+					Type:   packets.Publish,
+					Qos:    m.QoS,
+					Retain: m.Retain,
+				},
 				TopicName:   m.Topic,
 				Payload:     m.Payload,
 			}
