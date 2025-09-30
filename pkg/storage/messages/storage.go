@@ -319,6 +319,13 @@ func (ms *MessageStorage) GetStats() StorageStats {
 	return ms.backend.Stats()
 }
 
+// GetBackend returns the underlying storage backend
+func (ms *MessageStorage) GetBackend() StorageBackend {
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	return ms.backend
+}
+
 // Close shuts down the storage system
 func (ms *MessageStorage) Close() error {
 	ms.mu.Lock()
