@@ -30,6 +30,7 @@ import (
 
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/auth"
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
@@ -41,37 +42,58 @@ import (
 
 // Broker is the central component of the MQTT server. It acts as the main
 // supervisor for client sessions and handles the core logic of message routing,
-// session management, and cluster communication.
+// session management, cluster communication, and authentication.
 type Broker struct {
 	sup      supervisor.Supervisor
 	sessions storage.Store
 	topics   *topic.Store
 	cluster  *cluster.Manager
 	nodeID   string
+	authChain *auth.AuthChain
 	mu       sync.RWMutex
 }
 
 // New creates and initializes a new Broker instance.
 //
-// It sets up the session store, topic store, and supervisor. If a cluster
-// manager is provided, it configures the broker to participate in a cluster by
-// setting the local publish callback.
+// It sets up the session store, topic store, supervisor, and authentication chain.
+// If a cluster manager is provided, it configures the broker to participate in a
+// cluster by setting the local publish callback.
 //
 // - nodeID: A unique identifier for this broker instance in the cluster.
 // - clusterMgr: A manager for cluster operations. Can be nil for a standalone broker.
 func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	b := &Broker{
-		sup:      supervisor.NewOneForOneSupervisor(),
-		sessions: storage.NewMemStore(),
-		topics:   topic.NewStore(),
-		cluster:  clusterMgr,
-		nodeID:   nodeID,
+		sup:       supervisor.NewOneForOneSupervisor(),
+		sessions:  storage.NewMemStore(),
+		topics:    topic.NewStore(),
+		cluster:   clusterMgr,
+		nodeID:    nodeID,
+		authChain: auth.NewAuthChain(),
 	}
 	if clusterMgr != nil {
 		// Set the callback for the cluster manager to publish locally
 		clusterMgr.LocalPublishFunc = b.RouteToLocalSubscribers
 	}
 	return b
+}
+
+// GetAuthChain returns the authentication chain for configuration
+func (b *Broker) GetAuthChain() *auth.AuthChain {
+	return b.authChain
+}
+
+// SetupDefaultAuth sets up a default memory-based authenticator with sample users
+func (b *Broker) SetupDefaultAuth() {
+	memAuth := auth.NewMemoryAuthenticator()
+
+	// Add some default users for testing
+	memAuth.AddUser("admin", "admin123", auth.HashBcrypt)
+	memAuth.AddUser("user1", "password123", auth.HashSHA256)
+	memAuth.AddUser("test", "test", auth.HashPlain)
+
+	b.authChain.AddAuthenticator(memAuth)
+	log.Printf("[INFO] Default authentication configured with memory authenticator")
+	log.Printf("[INFO] Default users: admin/admin123, user1/password123, test/test")
 }
 
 // StartServer starts the MQTT broker's TCP listener on the specified address.
@@ -154,24 +176,70 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 			if clientID == "" {
 				log.Printf("[ERROR] CONNECT from %s has empty client ID. Closing connection.", conn.RemoteAddr())
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Connack},
+					ReasonCode:  0x85, // Client Identifier not valid
+				}
+				writePacket(conn, &resp)
 				return
 			}
 
-			log.Printf("[DEBUG] Registering session for client %s", clientID)
-			sessionMailbox = b.registerSession(connCtx, clientID, conn)
-			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", clientID, sessionMailbox)
+			// Extract username and password from CONNECT packet
+			var username, password string
+			if pk.Connect.UsernameFlag {
+				username = string(pk.Connect.Username)
+				log.Printf("[DEBUG] Username provided: '%s'", username)
+			}
+			if pk.Connect.PasswordFlag {
+				password = string(pk.Connect.Password)
+				log.Printf("[DEBUG] Password provided: %t", password != "")
+			}
 
+			// Perform authentication
+			authResult := b.authChain.Authenticate(username, password)
+			log.Printf("[DEBUG] Authentication result for client %s (user: %s): %s", clientID, username, authResult.String())
+
+			var connackCode byte
+			switch authResult {
+			case auth.AuthSuccess:
+				connackCode = packets.CodeSuccess.Code
+				log.Printf("[INFO] Authentication successful for client %s (user: %s)", clientID, username)
+			case auth.AuthFailure:
+				connackCode = 0x84 // Bad username or password
+				log.Printf("[WARN] Authentication failed for client %s (user: %s)", clientID, username)
+			case auth.AuthError:
+				connackCode = 0x80 // Unspecified error
+				log.Printf("[ERROR] Authentication error for client %s (user: %s)", clientID, username)
+			case auth.AuthIgnore:
+				// If authentication is ignored (no authenticators or all skip), allow connection
+				connackCode = packets.CodeSuccess.Code
+				log.Printf("[INFO] Authentication ignored for client %s (user: %s), allowing connection", clientID, username)
+			}
+
+			// Send CONNACK response
 			resp := packets.Packet{
 				FixedHeader: packets.FixedHeader{Type: packets.Connack},
-				ReasonCode:  packets.CodeSuccess.Code,
+				ReasonCode:  connackCode,
 			}
-			log.Printf("[DEBUG] Sending CONNACK to client %s", clientID)
+
+			log.Printf("[DEBUG] Sending CONNACK to client %s with reason code: 0x%02x", clientID, connackCode)
 			err = writePacket(conn, &resp)
 			if err != nil {
 				log.Printf("[ERROR] Failed to send CONNACK to client %s: %v", clientID, err)
-			} else {
-				log.Printf("[INFO] Client %s connected successfully", clientID)
+				return
 			}
+
+			// If authentication failed, close the connection
+			if connackCode != packets.CodeSuccess.Code {
+				log.Printf("[INFO] Closing connection for client %s due to authentication failure", clientID)
+				return
+			}
+
+			// Authentication successful, register session
+			log.Printf("[DEBUG] Registering session for client %s", clientID)
+			sessionMailbox = b.registerSession(connCtx, clientID, conn)
+			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", clientID, sessionMailbox)
+			log.Printf("[INFO] Client %s connected successfully with user: %s", clientID, username)
 
 		case packets.Subscribe:
 			log.Printf("[DEBUG] SUBSCRIBE packet received from client %s (remote: %s)", clientID, conn.RemoteAddr())

@@ -1,0 +1,36 @@
+broker:
+  node_id: emqx-go-node
+  mqtt_port: :1883
+  grpc_port: :8081
+  metrics_port: :8082
+  auth:
+    enabled: true
+    users:
+    - username: admin
+      password: admin123
+      algorithm: bcrypt
+      enabled: true
+    - username: user1
+      password: password123
+      algorithm: sha256
+      enabled: true
+    - username: test
+      password: test
+      algorithm: plain
+      enabled: true
+    - username: guest
+      password: guest123
+      algorithm: sha256
+      enabled: false
+    - username: device001
+      password: device_secret_key
+      algorithm: bcrypt
+      enabled: true
+    - username: newuser
+      password: updatedsecret
+      algorithm: bcrypt
+      enabled: false
+    - username: iot_device_123
+      password: secret_key_123
+      algorithm: sha256
+      enabled: true
