@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <style>
+        .certificate-card {
+            background: white;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .cert-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 1rem;
+        }
+        .cert-info {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .cert-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        .status-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+        .status-enabled {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status-disabled {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .cert-type {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+        .type-server {
+            background-color: #cce5ff;
+            color: #0066cc;
+        }
+        .type-ca {
+            background-color: #ffe6cc;
+            color: #cc6600;
+        }
+        .type-client {
+            background-color: #e6ffcc;
+            color: #66cc00;
+        }
+        .add-certificate-form {
+            background: white;
+            border: 1px solid #e1e8ed;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.875rem;
+        }
+        .form-group textarea {
+            min-height: 120px;
+            resize: vertical;
+        }
+        .btn-group {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX Go Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="/connections">Connections</a>
+                    <a href="/sessions">Sessions</a>
+                    <a href="/subscriptions">Subscriptions</a>
+                    <a href="/certificates" class="active">Certificates</a>
+                    <a href="/tls-config">TLS Config</a>
+                    <a href="/monitoring">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, admin</span>
+                    <a href="/logout" class="btn btn-small">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">Certificate Management</h1>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <span style="font-size: 0.9rem; color: #666;">Total: <strong>{{.Count}}</strong> certificates</span>
+                    <button id="refresh-btn" class="btn btn-primary btn-small" onclick="refreshCertificates()">Refresh</button>
+                    <button id="add-cert-btn" class="btn btn-success btn-small" onclick="toggleAddForm()">Add Certificate</button>
+                </div>
+            </div>
+
+            <!-- Add Certificate Form -->
+            <div id="add-certificate-form" class="add-certificate-form" style="display: none;">
+                <h3>Add New Certificate</h3>
+                <form id="certificate-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="cert-id">Certificate ID</label>
+                            <input type="text" id="cert-id" name="id" placeholder="unique-cert-id" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="cert-name">Certificate Name</label>
+                            <input type="text" id="cert-name" name="name" placeholder="My Certificate" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="cert-type">Certificate Type</label>
+                            <select id="cert-type" name="type" required>
+                                <option value="server">Server Certificate</option>
+                                <option value="ca">CA Certificate</option>
+                                <option value="client">Client Certificate</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="cert-content">Certificate Content (PEM)</label>
+                            <textarea id="cert-content" name="content" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----" required></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label for="cert-key">Private Key (PEM) - Optional for CA certificates</label>
+                            <textarea id="cert-key" name="key" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"></textarea>
+                        </div>
+                    </div>
+                    <div class="btn-group">
+                        <button type="submit" class="btn btn-primary">Add Certificate</button>
+                        <button type="button" class="btn btn-secondary" onclick="toggleAddForm()">Cancel</button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Certificates List -->
+            <div id="certificates-list">
+                {{range .Certificates}}
+                <div class="certificate-card" data-cert-id="{{.ID}}">
+                    <div class="cert-header">
+                        <div>
+                            <h3 style="margin: 0; color: #333;">{{.Name}}</h3>
+                            <div style="display: flex; gap: 0.5rem; margin-top: 0.5rem;">
+                                <span class="cert-type type-{{.Type}}">{{.Type}}</span>
+                                <span class="status-badge {{if .Enabled}}status-enabled{{else}}status-disabled{{end}}">
+                                    {{if .Enabled}}Enabled{{else}}Disabled{{end}}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="cert-actions">
+                            <button class="btn btn-small btn-primary" onclick="viewCertificate('{{.ID}}')">View</button>
+                            <button class="btn btn-small btn-danger" onclick="deleteCertificate('{{.ID}}')">Delete</button>
+                        </div>
+                    </div>
+                    <div class="cert-info">
+                        <div>
+                            <strong>ID:</strong> {{.ID}}
+                        </div>
+                        <div>
+                            <strong>Subject:</strong> {{.Subject}}
+                        </div>
+                        <div>
+                            <strong>Issuer:</strong> {{.Issuer}}
+                        </div>
+                        <div>
+                            <strong>Valid From:</strong> {{.NotBefore.Format "2006-01-02 15:04:05"}}
+                        </div>
+                        <div>
+                            <strong>Valid To:</strong> {{.NotAfter.Format "2006-01-02 15:04:05"}}
+                        </div>
+                        <div>
+                            <strong>Serial Number:</strong> {{.SerialNumber}}
+                        </div>
+                        <div>
+                            <strong>Fingerprint:</strong> <code style="font-size: 0.75rem;">{{.Fingerprint}}</code>
+                        </div>
+                        <div>
+                            <strong>Created:</strong> {{.CreatedAt.Format "2006-01-02 15:04:05"}}
+                        </div>
+                    </div>
+                </div>
+                {{else}}
+                <div class="card">
+                    <div class="card-content" style="text-align: center; padding: 3rem;">
+                        <h3 style="color: #666; margin-bottom: 1rem;">No certificates found</h3>
+                        <p style="color: #999; margin-bottom: 2rem;">Add your first certificate to get started.</p>
+                        <button class="btn btn-primary" onclick="toggleAddForm()">Add Certificate</button>
+                    </div>
+                </div>
+                {{end}}
+            </div>
+        </div>
+    </main>
+
+    <script>
+        function toggleAddForm() {
+            const form = document.getElementById('add-certificate-form');
+            form.style.display = form.style.display === 'none' ? 'block' : 'none';
+            if (form.style.display === 'block') {
+                document.getElementById('cert-id').focus();
+            }
+        }
+
+        function refreshCertificates() {
+            location.reload();
+        }
+
+        function viewCertificate(certId) {
+            fetch(`/api/certificates/${certId}`)
+                .then(response => response.json())
+                .then(data => {
+                    alert(`Certificate Details:\n\nID: ${data.id}\nName: ${data.name}\nType: ${data.type}\nSubject: ${data.subject}\nIssuer: ${data.issuer}\nValid From: ${data.not_before}\nValid To: ${data.not_after}`);
+                })
+                .catch(error => {
+                    alert('Error fetching certificate details: ' + error.message);
+                });
+        }
+
+        function deleteCertificate(certId) {
+            if (confirm(`Are you sure you want to delete certificate "${certId}"?`)) {
+                fetch(`/api/certificates/${certId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => {
+                    if (response.ok) {
+                        location.reload();
+                    } else {
+                        return response.text().then(text => {
+                            throw new Error(text);
+                        });
+                    }
+                })
+                .catch(error => {
+                    alert('Error deleting certificate: ' + error.message);
+                });
+            }
+        }
+
+        document.getElementById('certificate-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const formData = new FormData(e.target);
+            const certificateData = {
+                id: formData.get('id'),
+                name: formData.get('name'),
+                type: formData.get('type'),
+                content: formData.get('content'),
+                key: formData.get('key'),
+                enabled: true
+            };
+
+            fetch('/api/certificates', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(certificateData)
+            })
+            .then(response => {
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    return response.text().then(text => {
+                        throw new Error(text);
+                    });
+                }
+            })
+            .catch(error => {
+                alert('Error adding certificate: ' + error.message);
+            });
+        });
+    </script>
+</body>
+</html>

@@ -173,6 +173,13 @@ func (ac *AuthChain) Count() int {
 	return len(ac.authenticators)
 }
 
+// GetAuthenticators returns a copy of the authenticators slice
+func (ac *AuthChain) GetAuthenticators() []Authenticator {
+	result := make([]Authenticator, len(ac.authenticators))
+	copy(result, ac.authenticators)
+	return result
+}
+
 // hashPassword creates a hash of the password using the specified algorithm
 func hashPassword(password, salt string, algorithm HashAlgorithm) (string, error) {
 	switch algorithm {

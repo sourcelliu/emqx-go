@@ -138,7 +138,7 @@ func TestDashboardBasicFunctionality(t *testing.T) {
 		EnableAuth: false, // Disable for testing
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -188,7 +188,7 @@ func TestDashboardAPIEndpoints(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -269,7 +269,7 @@ func TestDashboardWithRealMQTTTraffic(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -365,7 +365,7 @@ func TestDashboardAuthentication(t *testing.T) {
 		EnableAuth: true, // Enable auth for this test
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -442,7 +442,7 @@ func TestDashboardPageNavigation(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -501,7 +501,7 @@ func TestDashboardStaticFiles(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
 	require.NoError(t, err)
 
 	// Start dashboard server
