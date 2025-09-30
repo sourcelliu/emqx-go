@@ -183,10 +183,11 @@ func (b *Broker) deliverOfflineMessage(clientID, topic string, payload []byte, q
 	}
 
 	msg := session.Publish{
-		Topic:   topic,
-		Payload: payload,
-		QoS:     qos,
-		Retain:  retain,
+		Topic:          topic,
+		Payload:        payload,
+		QoS:            qos,
+		Retain:         retain,
+		UserProperties: nil, // Offline messages don't currently store user properties
 	}
 
 	sessionMailbox.Send(msg)
@@ -459,8 +460,18 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				publishQoS = 2
 			}
 
-			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, qos=%d, retain=%t, payload_size=%d",
-				clientID, pk.TopicName, publishQoS, pk.FixedHeader.Retain, len(pk.Payload))
+			// Extract MQTT 5.0 user properties if present
+			var userProperties map[string][]byte
+			if len(pk.Properties.User) > 0 {
+				userProperties = make(map[string][]byte)
+				for _, userProp := range pk.Properties.User {
+					userProperties[userProp.Key] = []byte(userProp.Val)
+				}
+				log.Printf("[DEBUG] PUBLISH with %d user properties from client %s", len(pk.Properties.User), clientID)
+			}
+
+			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, qos=%d, retain=%t, payload_size=%d, user_props=%d",
+				clientID, pk.TopicName, publishQoS, pk.FixedHeader.Retain, len(pk.Payload), len(userProperties))
 
 			// Handle retained messages
 			if pk.FixedHeader.Retain {
@@ -473,8 +484,8 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				}
 			}
 
-			// Route the published message to subscribers
-			b.routePublish(pk.TopicName, pk.Payload, publishQoS)
+			// Route the published message to subscribers with user properties
+			b.routePublishWithUserProperties(pk.TopicName, pk.Payload, publishQoS, userProperties)
 
 			// Queue message for offline subscribers
 			matcher := &persistent.BasicTopicMatcher{}
@@ -604,6 +615,25 @@ func (b *Broker) unregisterSession(clientID string) {
 	b.sessions.Delete(clientID)
 }
 
+// routePublishWithUserProperties sends a message with user properties to all local and remote subscribers of a topic.
+func (b *Broker) routePublishWithUserProperties(topicName string, payload []byte, publishQoS byte, userProperties map[string][]byte) {
+	// Route to local subscribers
+	b.RouteToLocalSubscribersWithUserProperties(topicName, payload, publishQoS, userProperties)
+
+	// Route to remote subscribers if clustering is enabled
+	if b.cluster != nil {
+		remoteSubscribers := b.cluster.GetRemoteSubscribers(topicName)
+		for _, nodeID := range remoteSubscribers {
+			// Avoid forwarding to self
+			if nodeID == b.nodeID {
+				continue
+			}
+			log.Printf("Forwarding message for topic '%s' to remote node %s", topicName, nodeID)
+			b.cluster.ForwardPublish(topicName, payload, nodeID)
+		}
+	}
+}
+
 // routePublish sends a message to all local and remote subscribers of a topic.
 func (b *Broker) routePublish(topicName string, payload []byte, publishQoS byte) {
 	// Route to local subscribers
@@ -620,6 +650,36 @@ func (b *Broker) routePublish(topicName string, payload []byte, publishQoS byte)
 			log.Printf("Forwarding message for topic '%s' to remote node %s", topicName, nodeID)
 			b.cluster.ForwardPublish(topicName, payload, nodeID)
 		}
+	}
+}
+
+// RouteToLocalSubscribersWithUserProperties delivers a message with user properties to all clients on the current node
+// that are subscribed to the given topic. It retrieves the list of subscribers
+// from the topic store and sends the message to each of their mailboxes.
+//
+// - topicName: The topic to which the message is published.
+// - payload: The message content.
+// - publishQoS: The QoS level of the published message.
+// - userProperties: MQTT 5.0 user-defined properties.
+func (b *Broker) RouteToLocalSubscribersWithUserProperties(topicName string, payload []byte, publishQoS byte, userProperties map[string][]byte) {
+	subscribers := b.topics.GetSubscribers(topicName)
+	if len(subscribers) > 0 {
+		log.Printf("Routing message on topic '%s' to %d local subscribers (with %d user properties)", topicName, len(subscribers), len(userProperties))
+	}
+	for _, sub := range subscribers {
+		// Apply QoS downgrade rule: effective QoS = min(publish QoS, subscription QoS)
+		effectiveQoS := publishQoS
+		if sub.QoS < publishQoS {
+			effectiveQoS = sub.QoS
+		}
+
+		msg := session.Publish{
+			Topic:          topicName,
+			Payload:        payload,
+			QoS:            effectiveQoS,
+			UserProperties: userProperties,
+		}
+		sub.Mailbox.Send(msg)
 	}
 }
 
@@ -646,9 +706,10 @@ func (b *Broker) RouteToLocalSubscribersWithQoS(topicName string, payload []byte
 		}
 
 		msg := session.Publish{
-			Topic:   topicName,
-			Payload: payload,
-			QoS:     effectiveQoS,
+			Topic:          topicName,
+			Payload:        payload,
+			QoS:            effectiveQoS,
+			UserProperties: nil, // Backward compatibility - no user properties
 		}
 		sub.Mailbox.Send(msg)
 	}
@@ -887,10 +948,11 @@ func (b *Broker) sendRetainedMessages(sessionMailbox *actor.Mailbox, filters []p
 
 			// Create session message
 			pubMsg := session.Publish{
-				Topic:   retainedMsg.Topic,
-				Payload: retainedMsg.Payload,
-				QoS:     effectiveQoS,
-				Retain:  true, // Mark as retained message
+				Topic:          retainedMsg.Topic,
+				Payload:        retainedMsg.Payload,
+				QoS:            effectiveQoS,
+				Retain:         true, // Mark as retained message
+				UserProperties: nil,  // Retained messages don't currently store user properties
 			}
 
 			// Send to subscriber's mailbox
