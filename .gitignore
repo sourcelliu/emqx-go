@@ -1,0 +1,124 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Build artifacts
+bin/
+dist/
+
+# Log files
+*.log
+emqx_service.log
+test_output.log
+
+# Configuration files with sensitive data
+config_local.yaml
+config_local.json
+secrets.yaml
+secrets.json
+
+# Development environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Backup files
+*.bak
+*.backup
+
+# Data directories
+data/
+logs/
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Kubernetes
+*.kubeconfig
+
+# CI/CD artifacts
+.github/workflows/artifacts/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# MQTT test data
+mqtt_test_data/
+
+# Certificates and keys (security)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Coverage reports
+coverage/
+htmlcov/
+
+# Benchmark results
+*.bench
+
+# Memory profiling
+*.prof
+*.heap
+
+# Generated documentation
+docs/generated/
+
+# Node modules (if any frontend tools are used)
+node_modules/
+
+# Python cache (if any Python tools are used)
+__pycache__/
+*.py[cod]
+*$py.class
