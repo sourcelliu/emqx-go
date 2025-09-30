@@ -27,6 +27,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/admin"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
+	tlspkg "github.com/turtacn/emqx-go/pkg/tls"
 )
 
 // mockBrokerInterface for testing
@@ -55,7 +56,7 @@ func createTestServer(t *testing.T) *Server {
 	mockBroker := &mockBrokerInterface{}
 	adminAPI := admin.NewAPIServer(metricsManager, mockBroker)
 
-	server, err := NewServer(config, adminAPI, metricsManager, healthChecker)
+	server, err := NewServer(config, adminAPI, metricsManager, healthChecker, tlspkg.NewCertificateManager())
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -348,7 +349,7 @@ func TestAuthMiddleware(t *testing.T) {
 	mockBroker := &mockBrokerInterface{}
 	adminAPI := admin.NewAPIServer(metricsManager, mockBroker)
 
-	server, err := NewServer(config, adminAPI, metricsManager, healthChecker)
+	server, err := NewServer(config, adminAPI, metricsManager, healthChecker, tlspkg.NewCertificateManager())
 	require.NoError(t, err)
 
 	// Create a test handler
@@ -397,7 +398,7 @@ func TestAuthMiddlewareAPIEndpoint(t *testing.T) {
 	mockBroker := &mockBrokerInterface{}
 	adminAPI := admin.NewAPIServer(metricsManager, mockBroker)
 
-	server, err := NewServer(config, adminAPI, metricsManager, healthChecker)
+	server, err := NewServer(config, adminAPI, metricsManager, healthChecker, tlspkg.NewCertificateManager())
 	require.NoError(t, err)
 
 	// Create a test handler

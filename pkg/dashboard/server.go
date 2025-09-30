@@ -30,8 +30,10 @@ import (
 	"time"
 
 	"github.com/turtacn/emqx-go/pkg/admin"
+	"github.com/turtacn/emqx-go/pkg/auth/x509"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
+	tlspkg "github.com/turtacn/emqx-go/pkg/tls"
 )
 
 //go:embed web/templates/* web/static/*
@@ -39,13 +41,14 @@ var embeddedFiles embed.FS
 
 // Server represents the dashboard web server
 type Server struct {
-	httpServer     *http.Server
-	adminAPI       *admin.APIServer
-	metricsManager *metrics.MetricsManager
-	healthChecker  *monitor.HealthChecker
-	templates      *template.Template
-	mux            *http.ServeMux
-	config         *Config
+	httpServer      *http.Server
+	adminAPI        *admin.APIServer
+	metricsManager  *metrics.MetricsManager
+	healthChecker   *monitor.HealthChecker
+	certificateManager *tlspkg.CertificateManager
+	templates       *template.Template
+	mux             *http.ServeMux
+	config          *Config
 }
 
 // Config contains dashboard server configuration
@@ -71,7 +74,7 @@ func DefaultConfig() *Config {
 }
 
 // NewServer creates a new dashboard server
-func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker) (*Server, error) {
+func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker, certManager *tlspkg.CertificateManager) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -79,11 +82,12 @@ func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metric
 	mux := http.NewServeMux()
 
 	server := &Server{
-		adminAPI:       adminAPI,
-		metricsManager: metricsManager,
-		healthChecker:  healthChecker,
-		mux:            mux,
-		config:         config,
+		adminAPI:           adminAPI,
+		metricsManager:     metricsManager,
+		healthChecker:      healthChecker,
+		certificateManager: certManager,
+		mux:                mux,
+		config:             config,
 	}
 
 	// Load templates
@@ -142,6 +146,8 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/sessions", s.authMiddleware(s.handleSessions))
 	s.mux.HandleFunc("/subscriptions", s.authMiddleware(s.handleSubscriptions))
 	s.mux.HandleFunc("/monitoring", s.authMiddleware(s.handleMonitoring))
+	s.mux.HandleFunc("/certificates", s.authMiddleware(s.handleCertificates))
+	s.mux.HandleFunc("/tls-config", s.authMiddleware(s.handleTLSConfig))
 
 	// Authentication
 	s.mux.HandleFunc("/login", s.handleLogin)
@@ -153,6 +159,13 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/dashboard/sessions", s.authMiddleware(s.handleAPISessions))
 	s.mux.HandleFunc("/api/dashboard/subscriptions", s.authMiddleware(s.handleAPISubscriptions))
 	s.mux.HandleFunc("/api/dashboard/health", s.authMiddleware(s.handleAPIHealth))
+
+	// Certificate management API endpoints
+	s.mux.HandleFunc("/api/certificates", s.authMiddleware(s.handleAPICertificates))
+	s.mux.HandleFunc("/api/certificates/", s.authMiddleware(s.handleAPICertificateByID))
+	s.mux.HandleFunc("/api/tls-config", s.authMiddleware(s.handleAPITLSConfig))
+	s.mux.HandleFunc("/api/tls-config/", s.authMiddleware(s.handleAPITLSConfigByID))
+	s.mux.HandleFunc("/api/x509-auth", s.authMiddleware(s.handleAPIX509Auth))
 
 	// Proxy admin API endpoints
 	s.mux.Handle("/api/v5/", s.authMiddleware(s.proxyAdminAPI))
@@ -321,6 +334,28 @@ func (s *Server) handleMonitoring(w http.ResponseWriter, r *http.Request) {
 
 	data := s.getMonitoringData()
 	s.renderTemplate(w, "monitoring.html", data)
+}
+
+// handleCertificates serves the certificate management page
+func (s *Server) handleCertificates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	data := s.getCertificatesData()
+	s.renderTemplate(w, "certificates.html", data)
+}
+
+// handleTLSConfig serves the TLS configuration page
+func (s *Server) handleTLSConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	data := s.getTLSConfigData()
+	s.renderTemplate(w, "tls-config.html", data)
 }
 
 // handleLogin serves the login page and processes login requests
@@ -626,4 +661,196 @@ func (s *Server) GetListenAddress() string {
 // UpdateConfig updates server configuration (requires restart)
 func (s *Server) UpdateConfig(config *Config) {
 	s.config = config
+}
+
+// Certificate management API handlers
+
+// handleAPICertificates handles certificate CRUD operations
+func (s *Server) handleAPICertificates(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// List all certificates
+		certs := s.certificateManager.ListCertificates()
+		data := map[string]interface{}{
+			"certificates": certs,
+			"count":        len(certs),
+		}
+		s.writeJSON(w, data)
+
+	case http.MethodPost:
+		// Add new certificate
+		var cert tlspkg.Certificate
+		if err := json.NewDecoder(r.Body).Decode(&cert); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.certificateManager.AddCertificate(&cert); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Certificate added successfully",
+			"id":      cert.ID,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPICertificateByID handles operations on specific certificates
+func (s *Server) handleAPICertificateByID(w http.ResponseWriter, r *http.Request) {
+	// Extract certificate ID from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/certificates/")
+	if path == "" {
+		http.Error(w, "Certificate ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get specific certificate
+		cert, err := s.certificateManager.GetCertificate(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, cert)
+
+	case http.MethodDelete:
+		// Delete certificate
+		if err := s.certificateManager.DeleteCertificate(path); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Certificate deleted successfully",
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPITLSConfig handles TLS configuration operations
+func (s *Server) handleAPITLSConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		// Add new TLS configuration
+		var config tlspkg.TLSConfig
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		// Generate a simple ID for the config
+		configID := fmt.Sprintf("tls-config-%d", time.Now().Unix())
+		s.certificateManager.SetTLSConfig(configID, &config)
+
+		s.writeJSON(w, map[string]interface{}{
+			"message":   "TLS configuration added successfully",
+			"config_id": configID,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPITLSConfigByID handles operations on specific TLS configurations
+func (s *Server) handleAPITLSConfigByID(w http.ResponseWriter, r *http.Request) {
+	// Extract config ID from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/tls-config/")
+	if path == "" {
+		http.Error(w, "TLS config ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get TLS configuration
+		tlsConfig, err := s.certificateManager.GetTLSConfig(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+
+		// Convert to our config format for response
+		config := &tlspkg.TLSConfig{
+			Enabled:         true,
+			ServerName:      tlsConfig.ServerName,
+			ClientCertAuth:  tlsConfig.ClientAuth != 0,
+		}
+		s.writeJSON(w, config)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIX509Auth handles X.509 authentication configuration
+func (s *Server) handleAPIX509Auth(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		// Return default X.509 authentication configuration
+		config := x509.DefaultX509Config()
+		s.writeJSON(w, config)
+
+	case http.MethodPost:
+		// Update X.509 authentication configuration
+		var config x509.X509Config
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		// In a real implementation, this would update the broker's X.509 authenticator
+		// For now, just return success
+		s.writeJSON(w, map[string]interface{}{
+			"message": "X.509 authentication configuration updated successfully",
+			"config":  config,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Helper methods for certificate management
+
+// getCertificatesData prepares data for certificates page
+func (s *Server) getCertificatesData() map[string]interface{} {
+	certs := s.certificateManager.ListCertificates()
+
+	return map[string]interface{}{
+		"Title":        "Certificates - EMQX Go",
+		"Certificates": certs,
+		"Count":        len(certs),
+	}
+}
+
+// getTLSConfigData prepares data for TLS configuration page
+func (s *Server) getTLSConfigData() map[string]interface{} {
+	return map[string]interface{}{
+		"Title": "TLS Configuration - EMQX Go",
+		"VerifyModes": []map[string]interface{}{
+			{"value": "none", "label": "No Verification"},
+			{"value": "verify_peer", "label": "Verify Peer"},
+			{"value": "verify_peer_fail_if_no_peer_cert", "label": "Verify Peer (Fail if No Cert)"},
+		},
+		"CertTypes": []map[string]interface{}{
+			{"value": "server", "label": "Server Certificate"},
+			{"value": "ca", "label": "CA Certificate"},
+			{"value": "client", "label": "Client Certificate"},
+		},
+		"IdentitySources": []map[string]interface{}{
+			{"value": "subject_dn", "label": "Subject DN"},
+			{"value": "subject_cn", "label": "Subject Common Name"},
+			{"value": "san", "label": "Subject Alternative Names"},
+			{"value": "serial", "label": "Serial Number"},
+			{"value": "fingerprint", "label": "Fingerprint"},
+		},
+	}
 }

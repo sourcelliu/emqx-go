@@ -48,7 +48,7 @@ func main() {
 	config := dashboard.DefaultConfig()
 	config.Address = "127.0.0.1"  // Bind to localhost for security
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, brokerInstance.GetCertificateManager())
 	if err != nil {
 		log.Fatalf("Failed to create dashboard server: %v", err)
 	}
