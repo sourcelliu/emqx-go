@@ -29,13 +29,25 @@ func TestStore(t *testing.T) {
 	mb2 := actor.NewMailbox(10)
 
 	// Test Subscribe
-	s.Subscribe("test/topic", mb1)
-	s.Subscribe("test/topic", mb2)
+	s.Subscribe("test/topic", mb1, 1)
+	s.Subscribe("test/topic", mb2, 2)
 
 	subs := s.GetSubscribers("test/topic")
 	assert.Len(t, subs, 2)
-	assert.Contains(t, subs, mb1)
-	assert.Contains(t, subs, mb2)
+
+	// Check that we have the correct mailboxes and QoS levels
+	var foundMB1, foundMB2 bool
+	for _, sub := range subs {
+		if sub.Mailbox == mb1 {
+			foundMB1 = true
+			assert.Equal(t, byte(1), sub.QoS)
+		} else if sub.Mailbox == mb2 {
+			foundMB2 = true
+			assert.Equal(t, byte(2), sub.QoS)
+		}
+	}
+	assert.True(t, foundMB1)
+	assert.True(t, foundMB2)
 
 	// Test GetSubscribers for unknown topic
 	subs = s.GetSubscribers("unknown/topic")
@@ -45,7 +57,7 @@ func TestStore(t *testing.T) {
 	s.Unsubscribe("test/topic", mb1)
 	subs = s.GetSubscribers("test/topic")
 	assert.Len(t, subs, 1)
-	assert.Equal(t, mb2, subs[0])
+	assert.Equal(t, mb2, subs[0].Mailbox)
 
 	// Test Unsubscribe last subscriber
 	s.Unsubscribe("test/topic", mb2)

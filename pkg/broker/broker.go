@@ -541,7 +541,7 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 			}
 			// Force QoS to 0 for safety
 			fh.Qos = 0
-			log.Printf("[DEBUG] Packet type: %d (%s), forced QoS to 0", packetType, fh.Type)
+			log.Printf("[DEBUG] Packet type: %d (%d), forced QoS to 0", packetType, int(fh.Type))
 		} else {
 			return nil, err
 		}
