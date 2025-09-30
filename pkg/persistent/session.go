@@ -17,6 +17,7 @@
 package persistent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -134,6 +135,9 @@ type SessionManager struct {
 	// Active sessions (connected clients)
 	activeSessions map[string]*PersistentSession
 
+	// Will message management
+	willManager *WillMessageManager
+
 	// Cleanup and retry management
 	cleanupTicker *time.Ticker
 	retryTicker   *time.Ticker
@@ -157,11 +161,20 @@ func NewSessionManager(store storage.Store, config *Config) *SessionManager {
 		stopRetry:      make(chan struct{}),
 	}
 
+	// Initialize will message manager with a placeholder publisher
+	// The actual publisher will be set by the broker
+	sm.willManager = NewWillMessageManager(nil)
+
 	// Start background routines
 	sm.startCleanupRoutine()
 	sm.startRetryRoutine()
 
 	return sm
+}
+
+// SetWillMessagePublisher sets the publisher for will messages
+func (sm *SessionManager) SetWillMessagePublisher(publisher WillMessagePublisher) {
+	sm.willManager.publisher = publisher
 }
 
 // CreateOrResumeSession creates a new session or resumes an existing persistent session
@@ -258,14 +271,20 @@ func (sm *SessionManager) DisconnectSession(clientID string, graceful bool) erro
 
 	// Handle will message if disconnection was not graceful
 	if !graceful && session.WillMessage != nil {
-		log.Printf("[INFO] Publishing will message for client %s to topic %s", clientID, session.WillMessage.Topic)
-		// TODO: Integrate with broker's publish mechanism
-		// For now, just log the will message
-		log.Printf("[WILL] Topic: %s, Payload: %s, QoS: %d, Retain: %t",
-			session.WillMessage.Topic, string(session.WillMessage.Payload), session.WillMessage.QoS, session.WillMessage.Retain)
+		log.Printf("[INFO] Triggering will message for client %s due to abnormal disconnection", clientID)
+
+		// Publish will message using the will manager
+		ctx := context.Background()
+		if err := sm.willManager.PublishWillMessage(ctx, session.WillMessage, clientID); err != nil {
+			log.Printf("[ERROR] Failed to publish will message for client %s: %v", clientID, err)
+		}
+	} else if graceful {
+		// Cancel any scheduled will messages for graceful disconnection
+		sm.willManager.CancelWillMessage(clientID)
+		log.Printf("[INFO] Cancelled scheduled will messages for client %s (graceful disconnect)", clientID)
 	}
 
-	// Clear will message after disconnection
+	// Clear will message after disconnection (graceful or after publishing)
 	session.WillMessage = nil
 
 	// If clean session, remove from active sessions and storage
@@ -450,6 +469,11 @@ func (sm *SessionManager) Close() error {
 	if sm.retryTicker != nil {
 		sm.retryTicker.Stop()
 		close(sm.stopRetry)
+	}
+
+	// Close will message manager
+	if sm.willManager != nil {
+		sm.willManager.Close()
 	}
 
 	// Save all active sessions
