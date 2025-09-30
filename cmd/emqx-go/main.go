@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/cluster"
+	"github.com/turtacn/emqx-go/pkg/config"
 	"github.com/turtacn/emqx-go/pkg/discovery"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
@@ -48,21 +50,47 @@ const (
 
 // main is the primary function that starts the EMQX-Go broker.
 // It follows these steps:
-// 1. Sets up a unique node ID.
-// 2. Initializes the main context for graceful shutdown.
-// 3. Creates the cluster manager and the main broker, linking them together.
-// 4. Starts the MQTT broker server in a goroutine.
-// 5. Starts the gRPC server for cluster communication in a goroutine.
-// 6. Starts the Prometheus metrics server in a goroutine.
-// 7. Starts the peer discovery process in a goroutine.
-// 8. Blocks and waits for a shutdown signal (SIGINT or SIGTERM) to gracefully
-//    terminate the application.
+// 1. Parses command line arguments and loads configuration.
+// 2. Sets up a unique node ID.
+// 3. Initializes the main context for graceful shutdown.
+// 4. Creates the cluster manager and the main broker, linking them together.
+// 5. Configures authentication from the configuration file.
+// 6. Starts the MQTT broker server in a goroutine.
+// 7. Starts the gRPC server for cluster communication in a goroutine.
+// 8. Starts the Prometheus metrics server in a goroutine.
+// 9. Starts the peer discovery process in a goroutine.
+// 10. Blocks and waits for a shutdown signal (SIGINT or SIGTERM) to gracefully
+//     terminate the application.
 func main() {
+	// Parse command line flags
+	var configPath = flag.String("config", "", "Path to configuration file (YAML or JSON)")
+	var generateConfig = flag.String("generate-config", "", "Generate a sample configuration file at the specified path")
+	flag.Parse()
+
+	// Handle config generation
+	if *generateConfig != "" {
+		err := config.SaveConfig(config.DefaultConfig(), *generateConfig)
+		if err != nil {
+			log.Fatalf("Failed to generate config file: %v", err)
+		}
+		log.Printf("Sample configuration saved to %s", *generateConfig)
+		return
+	}
+
 	log.Println("Starting EMQX-GO Broker PoC (Phase 3)...")
 
-	nodeID, _ := os.Hostname()
+	// Load configuration
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	nodeID := cfg.Broker.NodeID
 	if nodeID == "" {
-		nodeID = "local-node"
+		nodeID, _ = os.Hostname()
+		if nodeID == "" {
+			nodeID = "local-node"
+		}
 	}
 	log.Printf("Node ID: %s", nodeID)
 
@@ -72,7 +100,7 @@ func main() {
 	// --- Setup Broker and Cluster Manager ---
 	// The broker needs to be created first to pass its publish function to the manager.
 	var b *broker.Broker
-	clusterMgr := cluster.NewManager(nodeID, fmt.Sprintf("%s%s", nodeID, grpcPort), func(topic string, payload []byte) {
+	clusterMgr := cluster.NewManager(nodeID, fmt.Sprintf("%s%s", nodeID, cfg.Broker.GRPCPort), func(topic string, payload []byte) {
 		if b != nil {
 			b.RouteToLocalSubscribers(topic, payload)
 		}
@@ -80,8 +108,15 @@ func main() {
 
 	// --- Start Local Broker ---
 	b = broker.New(nodeID, clusterMgr)
+
+	// --- Configure Authentication from Config File ---
+	err = cfg.ConfigureAuth(b.GetAuthChain())
+	if err != nil {
+		log.Fatalf("Failed to configure authentication: %v", err)
+	}
+
 	go func() {
-		if err := b.StartServer(ctx, ":1883"); err != nil {
+		if err := b.StartServer(ctx, cfg.Broker.MQTTPort); err != nil {
 			log.Fatalf("Broker server failed: %v", err)
 		}
 	}()
@@ -91,12 +126,12 @@ func main() {
 	clusterServer := cluster.NewServer(nodeID, clusterMgr)
 	clusterpb.RegisterClusterServiceServer(grpcServer, clusterServer)
 
-	lis, err := net.Listen("tcp", grpcPort)
+	lis, err := net.Listen("tcp", cfg.Broker.GRPCPort)
 	if err != nil {
 		log.Fatalf("Failed to listen for gRPC: %v", err)
 	}
 	go func() {
-		log.Printf("gRPC server listening on %s", grpcPort)
+		log.Printf("gRPC server listening on %s", cfg.Broker.GRPCPort)
 		if err := grpcServer.Serve(lis); err != nil {
 			log.Fatalf("gRPC server failed: %v", err)
 		}
@@ -104,7 +139,7 @@ func main() {
 	defer grpcServer.Stop()
 
 	// --- Start Metrics Server ---
-	go metrics.Serve(metricsPort)
+	go metrics.Serve(cfg.Broker.MetricsPort)
 
 	// --- Start Discovery and Peer Connection ---
 	go startDiscovery(ctx, clusterMgr)
