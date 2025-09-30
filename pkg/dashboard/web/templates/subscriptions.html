@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX Go Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="/connections">Connections</a>
+                    <a href="/sessions">Sessions</a>
+                    <a href="/subscriptions" class="active">Subscriptions</a>
+                    <a href="/monitoring">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, admin</span>
+                    <a href="/logout" class="btn btn-small">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">Subscription Management</h1>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <label>
+                        <input type="checkbox" id="auto-refresh" checked> Auto Refresh (5s)
+                    </label>
+                    <button id="refresh-btn" class="btn btn-primary btn-small">Refresh</button>
+                    <span style="font-size: 0.9rem; color: #666;">Total: {{.SubscriptionCount}} subscriptions</span>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="dashboard-grid" style="margin-bottom: 2rem;">
+                <div class="metric-card">
+                    <div class="metric-title">Total Subscriptions</div>
+                    <div class="metric-value" id="subscriptions-count">{{.SubscriptionCount}}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">QoS 0</div>
+                    <div class="metric-value" id="subscriptions-qos0">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">QoS 1</div>
+                    <div class="metric-value" id="subscriptions-qos1">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">QoS 2</div>
+                    <div class="metric-value" id="subscriptions-qos2">0</div>
+                </div>
+            </div>
+
+            <!-- Subscriptions Table -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Active Subscriptions</h2>
+                </div>
+                <div class="card-content">
+                    <div style="overflow-x: auto;">
+                        <table class="table" id="subscriptions-table">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Topic</th>
+                                    <th>QoS</th>
+                                    <th>Node</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{if .Subscriptions}}
+                                {{range .Subscriptions}}
+                                <tr>
+                                    <td>{{.ClientID}}</td>
+                                    <td>{{.Topic}}</td>
+                                    <td><span class="qos-badge qos-{{.QoS}}">{{.QoS}}</span></td>
+                                    <td>{{.Node}}</td>
+                                    <td>
+                                        <button class="btn btn-danger btn-small unsubscribe-btn"
+                                                data-client-id="{{.ClientID}}" data-topic="{{.Topic}}">
+                                            Unsubscribe
+                                        </button>
+                                    </td>
+                                </tr>
+                                {{end}}
+                                {{else}}
+                                <tr>
+                                    <td colspan="5" style="text-align: center; color: #666; padding: 2rem;">
+                                        No active subscriptions found
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

@@ -279,48 +279,49 @@ func TestAdminAPIEndpoints(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	// Create mock broker for admin API
-	mockBroker := &testBrokerInterface{
-		connections: []admin.ConnectionInfo{
-			{
-				ClientID:    "admin-client-1",
-				Username:    "user1",
-				PeerHost:    "127.0.0.1",
-				SockPort:    1932,
-				Protocol:    "MQTT",
-				ConnectedAt: time.Now(),
-				Node:        "admin-test-broker",
-			},
+	mockBroker := newTestBrokerInterface()
+
+	// Add test data to the mock broker
+	mockBroker.connections = []admin.ConnectionInfo{
+		{
+			ClientID:    "admin-client-1",
+			Username:    "user1",
+			PeerHost:    "127.0.0.1",
+			SockPort:    1932,
+			Protocol:    "MQTT",
+			ConnectedAt: time.Now(),
+			Node:        "admin-test-broker",
 		},
-		sessions: []admin.SessionInfo{
-			{
-				ClientID:  "admin-client-1",
-				Username:  "user1",
-				CreatedAt: time.Now(),
-				Node:      "admin-test-broker",
-			},
+	}
+	mockBroker.sessions = []admin.SessionInfo{
+		{
+			ClientID:  "admin-client-1",
+			Username:  "user1",
+			CreatedAt: time.Now(),
+			Node:      "admin-test-broker",
 		},
-		subscriptions: []admin.SubscriptionInfo{
-			{
-				ClientID: "admin-client-1",
-				Topic:    "admin/test",
-				QoS:      1,
-				Node:     "admin-test-broker",
-			},
+	}
+	mockBroker.subscriptions = []admin.SubscriptionInfo{
+		{
+			ClientID: "admin-client-1",
+			Topic:    "admin/test",
+			QoS:      1,
+			Node:     "admin-test-broker",
 		},
-		routes: []admin.RouteInfo{
-			{
-				Topic: "admin/test",
-				Nodes: []string{"admin-test-broker"},
-			},
+	}
+	mockBroker.routes = []admin.RouteInfo{
+		{
+			Topic: "admin/test",
+			Nodes: []string{"admin-test-broker"},
 		},
-		nodes: []admin.NodeInfo{
-			{
-				Node:       "admin-test-broker",
-				NodeStatus: "running",
-				Version:    "1.0.0",
-				Uptime:     3600,
-				Datetime:   time.Now(),
-			},
+	}
+	mockBroker.nodes = []admin.NodeInfo{
+		{
+			Node:       "admin-test-broker",
+			NodeStatus: "running",
+			Version:    "1.0.0",
+			Uptime:     3600,
+			Datetime:   time.Now(),
 		},
 	}
 
@@ -518,70 +519,7 @@ func TestConcurrentMetricsAccess(t *testing.T) {
 	assert.Equal(t, int64(0), stats.Subscriptions.Count)
 }
 
-// Helper types and functions
-
-type testBrokerInterface struct {
-	connections   []admin.ConnectionInfo
-	sessions      []admin.SessionInfo
-	subscriptions []admin.SubscriptionInfo
-	routes        []admin.RouteInfo
-	nodes         []admin.NodeInfo
-}
-
-func (t *testBrokerInterface) GetConnections() []admin.ConnectionInfo {
-	return t.connections
-}
-
-func (t *testBrokerInterface) GetSessions() []admin.SessionInfo {
-	return t.sessions
-}
-
-func (t *testBrokerInterface) GetSubscriptions() []admin.SubscriptionInfo {
-	return t.subscriptions
-}
-
-func (t *testBrokerInterface) GetRoutes() []admin.RouteInfo {
-	return t.routes
-}
-
-func (t *testBrokerInterface) DisconnectClient(clientID string) error {
-	// Remove from connections
-	for i, conn := range t.connections {
-		if conn.ClientID == clientID {
-			t.connections = append(t.connections[:i], t.connections[i+1:]...)
-			break
-		}
-	}
-	return nil
-}
-
-func (t *testBrokerInterface) KickoutSession(clientID string) error {
-	// Remove from sessions
-	for i, session := range t.sessions {
-		if session.ClientID == clientID {
-			t.sessions = append(t.sessions[:i], t.sessions[i+1:]...)
-			break
-		}
-	}
-	return nil
-}
-
-func (t *testBrokerInterface) GetNodeInfo() admin.NodeInfo {
-	if len(t.nodes) > 0 {
-		return t.nodes[0]
-	}
-	return admin.NodeInfo{
-		Node:       "test-node",
-		NodeStatus: "running",
-		Version:    "1.0.0",
-		Uptime:     3600,
-		Datetime:   time.Now(),
-	}
-}
-
-func (t *testBrokerInterface) GetClusterNodes() []admin.NodeInfo {
-	return t.nodes
-}
+// Helper functions
 
 func createMonitorTestClient(clientID, address string) mqtt.Client {
 	opts := mqtt.NewClientOptions()

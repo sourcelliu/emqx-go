@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX Go Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="/connections">Connections</a>
+                    <a href="/sessions" class="active">Sessions</a>
+                    <a href="/subscriptions">Subscriptions</a>
+                    <a href="/monitoring">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, admin</span>
+                    <a href="/logout" class="btn btn-small">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">Session Management</h1>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <label>
+                        <input type="checkbox" id="auto-refresh" checked> Auto Refresh (5s)
+                    </label>
+                    <button id="refresh-btn" class="btn btn-primary btn-small">Refresh</button>
+                    <span style="font-size: 0.9rem; color: #666;">Total: {{.SessionCount}} sessions</span>
+                </div>
+            </div>
+
+            <!-- Summary Cards -->
+            <div class="dashboard-grid" style="margin-bottom: 2rem;">
+                <div class="metric-card">
+                    <div class="metric-title">Total Sessions</div>
+                    <div class="metric-value" id="sessions-count">{{.SessionCount}}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Persistent</div>
+                    <div class="metric-value" id="sessions-persistent">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Transient</div>
+                    <div class="metric-value" id="sessions-transient">0</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Clean Sessions</div>
+                    <div class="metric-value" id="sessions-clean">0</div>
+                </div>
+            </div>
+
+            <!-- Sessions Table -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Active Sessions</h2>
+                </div>
+                <div class="card-content">
+                    <div style="overflow-x: auto;">
+                        <table class="table" id="sessions-table">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Username</th>
+                                    <th>Clean Start</th>
+                                    <th>Created At</th>
+                                    <th>Subscriptions</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{if .Sessions}}
+                                {{range .Sessions}}
+                                <tr>
+                                    <td>{{.ClientID}}</td>
+                                    <td>{{.Username}}</td>
+                                    <td>{{if .CleanStart}}Yes{{else}}No{{end}}</td>
+                                    <td>{{.CreatedAt}}</td>
+                                    <td>{{.SubscriptionsCount}}</td>
+                                    <td>
+                                        <button class="btn btn-danger btn-small kickout-btn" data-client-id="{{.ClientID}}">
+                                            Kickout
+                                        </button>
+                                    </td>
+                                </tr>
+                                {{end}}
+                                {{else}}
+                                <tr>
+                                    <td colspan="6" style="text-align: center; color: #666; padding: 2rem;">
+                                        No active sessions found
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
