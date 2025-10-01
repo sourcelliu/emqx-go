@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/turtacn/emqx-go/pkg/blacklist"
@@ -310,19 +309,3 @@ func TestBlacklistTopicValidation(t *testing.T) {
 	t.Log("✅ Topic blacklist validation passed!")
 }
 
-func createTestMQTTClient(clientID, brokerPort string) mqtt.Client {
-	return createTestMQTTClientWithCredentials(clientID, "test", "test", brokerPort)
-}
-
-func createTestMQTTClientWithCredentials(clientID, username, password, brokerPort string) mqtt.Client {
-	opts := mqtt.NewClientOptions()
-	opts.AddBroker("tcp://localhost" + brokerPort)
-	opts.SetClientID(clientID)
-	opts.SetUsername(username)
-	opts.SetPassword(password)
-	opts.SetCleanSession(true)
-	opts.SetAutoReconnect(false)
-	opts.SetConnectTimeout(5 * time.Second)
-
-	return mqtt.NewClient(opts)
-}
