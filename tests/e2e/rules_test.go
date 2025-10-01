@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -380,22 +379,3 @@ func TestRuleEngineCompleteE2E(t *testing.T) {
 	t.Run("RuleDisableEnable", testRuleDisableEnable)
 }
 
-func setupMQTTClient(clientID string, t *testing.T) mqtt.Client {
-	opts := mqtt.NewClientOptions()
-	opts.AddBroker(rulesBrokerURL)
-	opts.SetClientID(clientID)
-	opts.SetKeepAlive(60 * time.Second)
-	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
-		t.Logf("Unexpected message on client %s: %s", clientID, msg.Payload())
-	})
-	opts.SetPingTimeout(1 * time.Second)
-	opts.SetConnectTimeout(5 * time.Second)
-
-	client := mqtt.NewClient(opts)
-	token := client.Connect()
-	require.True(t, token.Wait(), "Failed to connect to MQTT broker")
-	require.NoError(t, token.Error(), "Connection error")
-
-	t.Logf("Successfully connected MQTT client: %s", clientID)
-	return client
-}

@@ -154,7 +154,7 @@ func TestDashboardBasicFunctionality(t *testing.T) {
 	integrationEngine := integration.NewDataIntegrationEngine()
 
 	// Create rule engine for dashboard
-	ruleEngine := rules.NewRuleEngine()
+	ruleEngine := rules.NewRuleEngine(connectorManager)
 
 	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
@@ -213,7 +213,7 @@ func TestDashboardAPIEndpoints(t *testing.T) {
 	integrationEngine := integration.NewDataIntegrationEngine()
 
 	// Create rule engine for dashboard
-	ruleEngine := rules.NewRuleEngine()
+	ruleEngine := rules.NewRuleEngine(connectorManager)
 
 	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
@@ -303,7 +303,7 @@ func TestDashboardWithRealMQTTTraffic(t *testing.T) {
 	integrationEngine := integration.NewDataIntegrationEngine()
 
 	// Create rule engine for dashboard
-	ruleEngine := rules.NewRuleEngine()
+	ruleEngine := rules.NewRuleEngine(connectorManager)
 
 	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
@@ -408,7 +408,7 @@ func TestDashboardAuthentication(t *testing.T) {
 	integrationEngine := integration.NewDataIntegrationEngine()
 
 	// Create rule engine for dashboard
-	ruleEngine := rules.NewRuleEngine()
+	ruleEngine := rules.NewRuleEngine(connectorManager)
 
 	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
@@ -494,7 +494,7 @@ func TestDashboardPageNavigation(t *testing.T) {
 	integrationEngine := integration.NewDataIntegrationEngine()
 
 	// Create rule engine for dashboard
-	ruleEngine := rules.NewRuleEngine()
+	ruleEngine := rules.NewRuleEngine(connectorManager)
 
 	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
@@ -562,7 +562,7 @@ func TestDashboardStaticFiles(t *testing.T) {
 	integrationEngine := integration.NewDataIntegrationEngine()
 
 	// Create rule engine for dashboard
-	ruleEngine := rules.NewRuleEngine()
+	ruleEngine := rules.NewRuleEngine(connectorManager)
 
 	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
