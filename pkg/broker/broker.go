@@ -946,6 +946,16 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			var newRoutes []*clusterpb.Route
 			var reasonCodes []byte
 
+			// Check if we have empty filters (could be from QoS decode error recovery)
+			if len(pk.Filters) == 0 {
+				if pk.Properties.ReasonString == "Invalid QoS value in SUBSCRIBE packet" {
+					log.Printf("[INFO] Rejecting SUBSCRIBE from client %s due to invalid QoS value. MQTT spec requires QoS 0, 1, or 2.", clientID)
+				} else {
+					log.Printf("[WARN] Client %s sent SUBSCRIBE with no filters", clientID)
+				}
+				reasonCodes = append(reasonCodes, 0x81) // Implementation specific error for QoS violation
+			} else {
+
 			for i, sub := range pk.Filters {
 				log.Printf("[DEBUG] Processing subscription filter %d: Topic='%s', RequestedQoS=%d", i+1, sub.Filter, sub.Qos)
 
@@ -1004,6 +1014,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				reasonCodes = append(reasonCodes, grantedQoS)
 				log.Printf("[DEBUG] Added reason code: %d for subscription %d", grantedQoS, i+1)
 			}
+			} // Close the else block for non-empty filters
 
 			// Announce these new routes to peers
 			if b.cluster != nil {
@@ -1198,6 +1209,84 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 		case packets.Pingreq:
 			resp := packets.Packet{FixedHeader: packets.FixedHeader{Type: packets.Pingresp}}
 			err = writePacket(conn, &resp)
+
+		case packets.Unsubscribe:
+			log.Printf("[DEBUG] UNSUBSCRIBE packet received from client %s (remote: %s)", clientID, conn.RemoteAddr())
+			log.Printf("[DEBUG] UNSUBSCRIBE packet details - PacketID: %d, Filter count: %d", pk.PacketID, len(pk.Filters))
+
+			if sessionMailbox == nil {
+				log.Printf("[ERROR] UNSUBSCRIBE received before CONNECT from %s", conn.RemoteAddr())
+				return
+			}
+
+			log.Printf("[DEBUG] Processing UNSUBSCRIBE for client %s with session mailbox: %p", clientID, sessionMailbox)
+
+			var reasonCodes []byte
+			var removedRoutes []*clusterpb.Route
+
+			for i, sub := range pk.Filters {
+				topicFilter := sub.Filter
+				log.Printf("[DEBUG] Processing unsubscribe filter %d: Topic='%s'", i+1, topicFilter)
+
+				// Validate topic filter
+				if topicFilter == "" {
+					log.Printf("[ERROR] Client %s sent empty topic filter in unsubscription %d", clientID, i+1)
+					reasonCodes = append(reasonCodes, 0x11) // Topic filter invalid
+					continue
+				}
+
+				// Remove subscription from topic store
+				b.topics.Unsubscribe(topicFilter, sessionMailbox)
+				log.Printf("[DEBUG] Removed subscription from topic store: Client=%s, Topic=%s", clientID, topicFilter)
+
+				// Remove subscription from persistent session
+				if err := b.persistentSessionMgr.RemoveSubscription(clientID, topicFilter); err != nil {
+					log.Printf("[ERROR] Failed to remove persistent subscription for %s: %v", clientID, err)
+					reasonCodes = append(reasonCodes, 0x80) // Unspecified error
+					continue
+				}
+
+				log.Printf("[INFO] Client %s successfully unsubscribed from '%s'", clientID, topicFilter)
+
+				// Create route removal for cluster
+				removedRoute := &clusterpb.Route{
+					Topic:   topicFilter,
+					NodeIds: []string{b.nodeID},
+				}
+				removedRoutes = append(removedRoutes, removedRoute)
+				log.Printf("[DEBUG] Marked route for removal from cluster: Topic=%s, NodeID=%s", topicFilter, b.nodeID)
+
+				// Success
+				reasonCodes = append(reasonCodes, 0x00) // No error
+				log.Printf("[DEBUG] Added success reason code for unsubscription %d", i+1)
+			}
+
+			// Announce route removals to cluster peers
+			if b.cluster != nil && len(removedRoutes) > 0 {
+				log.Printf("[DEBUG] Broadcasting %d route removals to cluster peers", len(removedRoutes))
+				// Note: We would need a BroadcastRouteRemoval method in cluster
+				// For now, just log that we would remove them
+				for _, route := range removedRoutes {
+					log.Printf("[DEBUG] Would remove cluster route for topic: %s", route.Topic)
+				}
+			} else {
+				log.Printf("[DEBUG] No cluster manager - skipping route removal broadcast")
+			}
+
+			log.Printf("[DEBUG] Preparing UNSUBACK response - PacketID: %d, ReasonCodes: %v", pk.PacketID, reasonCodes)
+			resp := packets.Packet{
+				FixedHeader: packets.FixedHeader{Type: packets.Unsuback},
+				PacketID:    pk.PacketID,
+				ReasonCodes: reasonCodes,
+			}
+
+			log.Printf("[DEBUG] Sending UNSUBACK to client %s", clientID)
+			err = writePacket(conn, &resp)
+			if err != nil {
+				log.Printf("[ERROR] Failed to send UNSUBACK to client %s: %v", clientID, err)
+			} else {
+				log.Printf("[DEBUG] UNSUBACK sent successfully to client %s", clientID)
+			}
 
 		case packets.Disconnect:
 			log.Printf("Client %s sent DISCONNECT.", clientID)
@@ -1544,69 +1633,19 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 	case packets.Publish:
 		err = pk.PublishDecode(buf)
 	case packets.Subscribe:
-		// Special handling for SUBSCRIBE packets that might have QoS decode errors
 		err = pk.SubscribeDecode(buf)
+		// Handle QoS out of range errors gracefully for SUBSCRIBE packets
 		if err != nil && strings.Contains(err.Error(), "qos out of range") {
-			log.Printf("[WARN] SUBSCRIBE packet QoS decode error, attempting manual decode: %v", err)
-			// Manually decode SUBSCRIBE packet with QoS correction
-			if len(buf) >= 2 {
-				// Extract packet ID (first 2 bytes)
-				pk.PacketID = uint16(buf[0])<<8 | uint16(buf[1])
-
-				// Parse topic filters manually, starting from byte 2
-				pos := 2
-				pk.Filters = []packets.Subscription{}
-
-				for pos < len(buf) {
-					// Read topic length (2 bytes)
-					if pos+1 >= len(buf) {
-						break
-					}
-					topicLen := int(buf[pos])<<8 | int(buf[pos+1])
-					pos += 2
-
-					// Read topic string
-					if pos+topicLen >= len(buf) {
-						break
-					}
-					topic := string(buf[pos : pos+topicLen])
-					pos += topicLen
-
-					// Read QoS byte and fix if invalid
-					if pos >= len(buf) {
-						break
-					}
-					qos := buf[pos]
-					if qos > 2 {
-						log.Printf("[WARN] Invalid QoS %d in SUBSCRIBE, fixing to QoS 2", qos)
-						qos = 2
-					}
-					pos++
-
-					pk.Filters = append(pk.Filters, packets.Subscription{
-						Filter: topic,
-						Qos:    qos,
-					})
-
-					log.Printf("[DEBUG] Parsed subscription: Topic='%s', QoS=%d", topic, qos)
-				}
-
-				if len(pk.Filters) > 0 {
-					log.Printf("[DEBUG] Manual SUBSCRIBE decode succeeded with %d filters", len(pk.Filters))
-					err = nil
-				} else {
-					log.Printf("[WARN] No valid filters found, creating fallback")
-					pk.Filters = []packets.Subscription{{Filter: "fallback/topic", Qos: 0}}
-					pk.PacketID = 1
-					err = nil
-				}
-			} else {
-				log.Printf("[ERROR] SUBSCRIBE buffer too short, creating fallback")
-				pk.Filters = []packets.Subscription{{Filter: "fallback/topic", Qos: 0}}
-				pk.PacketID = 1
-				err = nil
-			}
+			log.Printf("[WARN] Client sent SUBSCRIBE packet with invalid QoS value (must be 0, 1, or 2). Sending SUBACK with failure code.")
+			// Don't return error - we'll handle this at the packet processing level
+			// Create a minimal valid packet with empty filters to trigger proper error response
+			pk.Filters = []packets.Subscription{}
+			// Mark this packet as having QoS error for better error messaging
+			pk.Properties.ReasonString = "Invalid QoS value in SUBSCRIBE packet"
+			err = nil
 		}
+	case packets.Unsubscribe:
+		err = pk.UnsubscribeDecode(buf)
 	case packets.Puback:
 		err = pk.PubackDecode(buf)
 	case packets.Pubrec:
@@ -1649,6 +1688,8 @@ func writePacket(w io.Writer, pk *packets.Packet) error {
 		err = pk.PubrelEncode(&buf)
 	case packets.Pubcomp:
 		err = pk.PubcompEncode(&buf)
+	case packets.Unsuback:
+		err = pk.UnsubackEncode(&buf)
 	default:
 		return fmt.Errorf("unsupported packet type for writing: %v", pk.FixedHeader.Type)
 	}
