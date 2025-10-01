@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/turtacn/emqx-go/pkg/admin"
+	"github.com/turtacn/emqx-go/pkg/blacklist"
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/dashboard"
@@ -215,4 +216,11 @@ func (r *realBrokerInterface) GetNodeInfo() admin.NodeInfo {
 		Uptime:     time.Now().Unix(),
 		Datetime:   time.Now(),
 	}
+}
+
+func (r *realBrokerInterface) GetBlacklistMiddleware() *blacklist.BlacklistMiddleware {
+	if r.broker != nil {
+		return r.broker.GetBlacklistMiddleware()
+	}
+	return nil
 }

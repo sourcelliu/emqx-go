@@ -155,6 +155,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/sessions", s.authMiddleware(s.handleSessions))
 	s.mux.HandleFunc("/subscriptions", s.authMiddleware(s.handleSubscriptions))
 	s.mux.HandleFunc("/monitoring", s.authMiddleware(s.handleMonitoring))
+	s.mux.HandleFunc("/blacklist", s.authMiddleware(s.handleBlacklist))
 	s.mux.HandleFunc("/certificates", s.authMiddleware(s.handleCertificates))
 	s.mux.HandleFunc("/tls-config", s.authMiddleware(s.handleTLSConfig))
 	s.mux.HandleFunc("/connectors", s.authMiddleware(s.handleConnectors))
@@ -171,6 +172,11 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/dashboard/sessions", s.authMiddleware(s.handleAPISessions))
 	s.mux.HandleFunc("/api/dashboard/subscriptions", s.authMiddleware(s.handleAPISubscriptions))
 	s.mux.HandleFunc("/api/dashboard/health", s.authMiddleware(s.handleAPIHealth))
+
+	// Blacklist management API endpoints
+	s.mux.HandleFunc("/api/blacklist", s.authMiddleware(s.handleAPIBlacklist))
+	s.mux.HandleFunc("/api/blacklist/", s.authMiddleware(s.handleAPIBlacklistByID))
+	s.mux.HandleFunc("/api/blacklist/stats", s.authMiddleware(s.handleAPIBlacklistStats))
 
 	// Certificate management API endpoints
 	s.mux.HandleFunc("/api/certificates", s.authMiddleware(s.handleAPICertificates))
@@ -1585,5 +1591,259 @@ func (s *Server) getIntegrationData() map[string]interface{} {
 		"Bridges": bridges,
 		"Count":   len(bridges),
 		"Metrics": metrics,
+	}
+}
+
+// Blacklist Management Handlers
+
+// handleBlacklist serves the blacklist management page
+func (s *Server) handleBlacklist(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	data := s.getBlacklistData()
+	s.renderTemplate(w, "blacklist.html", data)
+}
+
+// handleAPIBlacklist handles blacklist CRUD operations
+func (s *Server) handleAPIBlacklist(w http.ResponseWriter, r *http.Request) {
+	// For demo purposes, provide mock blacklist data
+	// In a full implementation, this would integrate with the actual blacklist middleware
+
+	switch r.Method {
+	case http.MethodGet:
+		// Handle listing with optional type filter
+		typeFilter := r.URL.Query().Get("type")
+
+		// Return mock blacklist entries
+		entries := []map[string]interface{}{
+			{
+				"id":          "demo-blocked-client",
+				"type":        "clientid",
+				"value":       "malicious-client",
+				"action":      "deny",
+				"reason":      "Suspicious behavior detected",
+				"enabled":     true,
+				"created_at":  time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+				"updated_at":  time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+			},
+			{
+				"id":          "demo-blocked-user",
+				"type":        "username",
+				"value":       "baduser",
+				"action":      "deny",
+				"reason":      "Account compromised",
+				"enabled":     true,
+				"created_at":  time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
+				"updated_at":  time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
+			},
+		}
+
+		// Filter by type if specified
+		if typeFilter != "" {
+			filtered := make([]map[string]interface{}, 0)
+			for _, entry := range entries {
+				if entry["type"] == typeFilter {
+					filtered = append(filtered, entry)
+				}
+			}
+			entries = filtered
+		}
+
+		data := map[string]interface{}{
+			"data":  entries,
+			"count": len(entries),
+		}
+		s.writeJSON(w, data)
+
+	case http.MethodPost:
+		// Create new blacklist entry
+		var entry map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&entry); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		// Validate required fields
+		if entry["type"] == nil || entry["action"] == nil {
+			http.Error(w, "Type and action are required", http.StatusBadRequest)
+			return
+		}
+
+		// Generate ID and timestamps
+		entryID := fmt.Sprintf("blacklist-entry-%d", time.Now().UnixNano())
+		now := time.Now().Format(time.RFC3339)
+
+		entry["id"] = entryID
+		entry["created_at"] = now
+		entry["updated_at"] = now
+
+		// In a full implementation, this would call the blacklist manager
+		response := map[string]interface{}{
+			"code":    0,
+			"message": "Blacklist entry created successfully",
+			"data":    entry,
+		}
+
+		w.WriteHeader(http.StatusCreated)
+		s.writeJSON(w, response)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIBlacklistByID handles operations on specific blacklist entries
+func (s *Server) handleAPIBlacklistByID(w http.ResponseWriter, r *http.Request) {
+	// Extract entry ID from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/blacklist/")
+	if path == "" {
+		http.Error(w, "Blacklist entry ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get specific blacklist entry
+		// For demo purposes, return a mock entry
+		entry := map[string]interface{}{
+			"id":          path,
+			"type":        "clientid",
+			"value":       "demo-client",
+			"action":      "deny",
+			"reason":      "Demo entry",
+			"enabled":     true,
+			"created_at":  time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+			"updated_at":  time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+		}
+
+		response := map[string]interface{}{
+			"code":    0,
+			"message": "success",
+			"data":    entry,
+		}
+		s.writeJSON(w, response)
+
+	case http.MethodPut:
+		// Update blacklist entry
+		var updates map[string]interface{}
+		if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		// Add updated timestamp
+		updates["updated_at"] = time.Now().Format(time.RFC3339)
+
+		// In a full implementation, this would call the blacklist manager
+		response := map[string]interface{}{
+			"code":    0,
+			"message": "Blacklist entry updated successfully",
+			"data":    updates,
+		}
+		s.writeJSON(w, response)
+
+	case http.MethodDelete:
+		// Delete blacklist entry
+		// In a full implementation, this would call the blacklist manager
+		response := map[string]interface{}{
+			"code":    0,
+			"message": "Blacklist entry deleted successfully",
+		}
+		w.WriteHeader(http.StatusNoContent)
+		s.writeJSON(w, response)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIBlacklistStats returns blacklist statistics
+func (s *Server) handleAPIBlacklistStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// For demo purposes, return mock statistics
+	stats := map[string]interface{}{
+		"total_entries": 2,
+		"entries_by_type": map[string]interface{}{
+			"clientid": 1,
+			"username": 1,
+			"ip":       0,
+			"topic":    0,
+		},
+		"recent_blocks": []map[string]interface{}{
+			{
+				"timestamp":   time.Now().Add(-5 * time.Minute).Format(time.RFC3339),
+				"client_id":   "malicious-client",
+				"reason":      "Blocked by clientid blacklist",
+				"entry_type":  "clientid",
+			},
+		},
+	}
+
+	response := map[string]interface{}{
+		"code":    0,
+		"message": "success",
+		"data":    stats,
+	}
+	s.writeJSON(w, response)
+}
+
+// getBlacklistData prepares data for blacklist page
+func (s *Server) getBlacklistData() map[string]interface{} {
+	// Mock data for demonstration
+	entries := []map[string]interface{}{
+		{
+			"ID":          "demo-blocked-client",
+			"Type":        "clientid",
+			"Value":       "malicious-client",
+			"Action":      "deny",
+			"Reason":      "Suspicious behavior detected",
+			"Enabled":     true,
+			"CreatedAt":   time.Now().Add(-1 * time.Hour).Format("2006-01-02 15:04:05"),
+			"UpdatedAt":   time.Now().Add(-1 * time.Hour).Format("2006-01-02 15:04:05"),
+		},
+		{
+			"ID":          "demo-blocked-user",
+			"Type":        "username",
+			"Value":       "baduser",
+			"Action":      "deny",
+			"Reason":      "Account compromised",
+			"Enabled":     true,
+			"CreatedAt":   time.Now().Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
+			"UpdatedAt":   time.Now().Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
+		},
+	}
+
+	stats := map[string]interface{}{
+		"TotalEntries": 2,
+		"EntriesByType": map[string]interface{}{
+			"clientid": 1,
+			"username": 1,
+			"ip":       0,
+			"topic":    0,
+		},
+	}
+
+	return map[string]interface{}{
+		"Title":           "Blacklist - EMQX Go",
+		"BlacklistEntries": entries,
+		"Count":           len(entries),
+		"Stats":           stats,
+		"Types": []map[string]interface{}{
+			{"value": "clientid", "label": "Client ID"},
+			{"value": "username", "label": "Username"},
+			{"value": "ip", "label": "IP Address"},
+			{"value": "topic", "label": "Topic"},
+		},
+		"Actions": []map[string]interface{}{
+			{"value": "deny", "label": "Deny"},
+			{"value": "log", "label": "Log Only"},
+		},
 	}
 }
