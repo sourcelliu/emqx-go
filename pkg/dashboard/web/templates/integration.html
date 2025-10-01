@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Integration - EMQX-Go Dashboard</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+    <style>
+        .integration-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .integration-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #e1e8ed;
+        }
+
+        .integration-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .tab-button {
+            padding: 10px 20px;
+            border: 1px solid #ddd;
+            background: #f5f5f5;
+            cursor: pointer;
+            border-radius: 5px;
+            transition: all 0.3s;
+        }
+
+        .tab-button.active {
+            background: #007bff;
+            color: white;
+            border-color: #007bff;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .bridge-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .bridge-card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .bridge-header {
+            display: flex;
+            justify-content: between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        .bridge-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .bridge-status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            text-transform: uppercase;
+        }
+
+        .bridge-status.enabled {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .bridge-status.disabled {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .bridge-metrics {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .metric {
+            text-align: center;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+
+        .metric-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #007bff;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .bridge-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .action-btn {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            transition: all 0.3s;
+        }
+
+        .btn-enable {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-disable {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-edit {
+            background: #ffc107;
+            color: #212529;
+        }
+
+        .btn-delete {
+            background: #dc3545;
+            color: white;
+        }
+
+        .connector-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+        }
+
+        .connector-card {
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 15px;
+            background: white;
+        }
+
+        .connector-type {
+            font-weight: bold;
+            color: #007bff;
+            margin-bottom: 10px;
+        }
+
+        .connector-status {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+
+        .status-indicator.connected {
+            background: #28a745;
+        }
+
+        .status-indicator.disconnected {
+            background: #dc3545;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.5);
+        }
+
+        .modal-content {
+            background-color: #fefefe;
+            margin: 5% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            border-radius: 8px;
+            width: 80%;
+            max-width: 800px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: black;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .form-group textarea {
+            height: 100px;
+            resize: vertical;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .kafka-config {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .config-section {
+            border: 1px solid #ddd;
+            padding: 15px;
+            border-radius: 6px;
+            background: #f8f9fa;
+        }
+
+        .config-section h4 {
+            margin: 0 0 15px 0;
+            color: #007bff;
+        }
+
+        .alert {
+            padding: 10px;
+            margin-bottom: 15px;
+            border-radius: 4px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="integration-container">
+        <div class="integration-header">
+            <h1>📊 Data Integration</h1>
+            <div>
+                <button class="btn btn-primary" onclick="showCreateBridgeModal()">Create Bridge</button>
+                <button class="btn btn-secondary" onclick="refreshData()">Refresh</button>
+            </div>
+        </div>
+
+        <div class="integration-tabs">
+            <div class="tab-button active" onclick="showTab('bridges')">Bridges</div>
+            <div class="tab-button" onclick="showTab('connectors')">Connectors</div>
+            <div class="tab-button" onclick="showTab('metrics')">Metrics</div>
+        </div>
+
+        <!-- Bridges Tab -->
+        <div id="bridges-tab" class="tab-content active">
+            <div id="alert-container"></div>
+            <div id="bridges-container" class="bridge-grid">
+                <!-- Bridges will be populated here -->
+            </div>
+        </div>
+
+        <!-- Connectors Tab -->
+        <div id="connectors-tab" class="tab-content">
+            <div id="connectors-container" class="connector-list">
+                <!-- Connectors will be populated here -->
+            </div>
+        </div>
+
+        <!-- Metrics Tab -->
+        <div id="metrics-tab" class="tab-content">
+            <div class="metrics-grid">
+                <div class="metric-card">
+                    <h3>Overall Statistics</h3>
+                    <div id="overall-metrics"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Bridge Modal -->
+    <div id="bridge-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-title">Create Data Bridge</h2>
+                <span class="close" onclick="closeBridgeModal()">&times;</span>
+            </div>
+            <form id="bridge-form">
+                <div class="form-group">
+                    <label for="bridge-id">Bridge ID *</label>
+                    <input type="text" id="bridge-id" required>
+                </div>
+                <div class="form-group">
+                    <label for="bridge-name">Bridge Name *</label>
+                    <input type="text" id="bridge-name" required>
+                </div>
+                <div class="form-group">
+                    <label for="bridge-description">Description</label>
+                    <textarea id="bridge-description"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="bridge-type">Bridge Type *</label>
+                    <select id="bridge-type" onchange="updateBridgeTypeConfig()" required>
+                        <option value="">Select Type</option>
+                        <option value="kafka">Kafka</option>
+                        <option value="http">HTTP</option>
+                        <option value="database">Database</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="bridge-direction">Direction *</label>
+                    <select id="bridge-direction" required>
+                        <option value="">Select Direction</option>
+                        <option value="ingress">Ingress (External → MQTT)</option>
+                        <option value="egress">Egress (MQTT → External)</option>
+                        <option value="bidirectional">Bidirectional</option>
+                    </select>
+                </div>
+
+                <!-- Kafka Configuration -->
+                <div id="kafka-config" class="kafka-config" style="display: none;">
+                    <div class="config-section">
+                        <h4>Basic Configuration</h4>
+                        <div class="form-group">
+                            <label for="kafka-brokers">Kafka Brokers *</label>
+                            <input type="text" id="kafka-brokers" placeholder="localhost:9092,broker2:9092">
+                        </div>
+                        <div class="form-group">
+                            <label for="kafka-topics">Topics</label>
+                            <input type="text" id="kafka-topics" placeholder="topic1,topic2">
+                        </div>
+                        <div class="form-group">
+                            <label for="kafka-producer-topic">Producer Topic</label>
+                            <input type="text" id="kafka-producer-topic">
+                        </div>
+                        <div class="form-group">
+                            <label for="kafka-consumer-group">Consumer Group</label>
+                            <input type="text" id="kafka-consumer-group">
+                        </div>
+                    </div>
+
+                    <div class="config-section">
+                        <h4>Security Configuration</h4>
+                        <div class="form-group">
+                            <label for="kafka-security-protocol">Security Protocol</label>
+                            <select id="kafka-security-protocol">
+                                <option value="PLAINTEXT">PLAINTEXT</option>
+                                <option value="SASL_PLAINTEXT">SASL_PLAINTEXT</option>
+                                <option value="SASL_SSL">SASL_SSL</option>
+                                <option value="SSL">SSL</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="kafka-username">Username</label>
+                            <input type="text" id="kafka-username">
+                        </div>
+                        <div class="form-group">
+                            <label for="kafka-password">Password</label>
+                            <input type="password" id="kafka-password">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="button" class="btn btn-secondary" onclick="closeBridgeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save Bridge</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let currentBridges = [];
+        let currentConnectors = [];
+        let editingBridge = null;
+
+        // Tab Management
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Show selected tab
+            document.getElementById(tabName + '-tab').classList.add('active');
+            event.target.classList.add('active');
+
+            // Load data for the selected tab
+            if (tabName === 'bridges') {
+                loadBridges();
+            } else if (tabName === 'connectors') {
+                loadConnectors();
+            } else if (tabName === 'metrics') {
+                loadMetrics();
+            }
+        }
+
+        // Load Bridges
+        async function loadBridges() {
+            try {
+                const response = await fetch('/api/integration/bridges');
+                if (response.ok) {
+                    currentBridges = await response.json();
+                    renderBridges();
+                } else {
+                    showAlert('Failed to load bridges', 'error');
+                }
+            } catch (error) {
+                showAlert('Error loading bridges: ' + error.message, 'error');
+            }
+        }
+
+        // Render Bridges
+        function renderBridges() {
+            const container = document.getElementById('bridges-container');
+
+            if (currentBridges.length === 0) {
+                container.innerHTML = '<div class="empty-state">No bridges configured. Create your first bridge to get started.</div>';
+                return;
+            }
+
+            container.innerHTML = currentBridges.map(bridge => `
+                <div class="bridge-card">
+                    <div class="bridge-header">
+                        <div class="bridge-title">${bridge.name}</div>
+                        <div class="bridge-status ${bridge.status}">${bridge.status}</div>
+                    </div>
+                    <div class="bridge-info">
+                        <div><strong>Type:</strong> ${bridge.type}</div>
+                        <div><strong>Direction:</strong> ${bridge.direction}</div>
+                        <div><strong>Description:</strong> ${bridge.description || 'No description'}</div>
+                    </div>
+                    <div class="bridge-metrics">
+                        <div class="metric">
+                            <div class="metric-value">${bridge.metrics?.messages_processed || 0}</div>
+                            <div class="metric-label">Messages</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${bridge.metrics?.messages_succeeded || 0}</div>
+                            <div class="metric-label">Success</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${bridge.metrics?.messages_failed || 0}</div>
+                            <div class="metric-label">Failed</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-value">${(bridge.metrics?.error_rate || 0).toFixed(1)}%</div>
+                            <div class="metric-label">Error Rate</div>
+                        </div>
+                    </div>
+                    <div class="bridge-actions">
+                        ${bridge.status === 'enabled' ?
+                            `<button class="action-btn btn-disable" onclick="toggleBridge('${bridge.id}', false)">Disable</button>` :
+                            `<button class="action-btn btn-enable" onclick="toggleBridge('${bridge.id}', true)">Enable</button>`
+                        }
+                        <button class="action-btn btn-edit" onclick="editBridge('${bridge.id}')">Edit</button>
+                        <button class="action-btn btn-delete" onclick="deleteBridge('${bridge.id}')">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Bridge Modal Management
+        function showCreateBridgeModal() {
+            editingBridge = null;
+            document.getElementById('modal-title').textContent = 'Create Data Bridge';
+            document.getElementById('bridge-form').reset();
+            document.getElementById('bridge-modal').style.display = 'block';
+        }
+
+        function editBridge(bridgeId) {
+            const bridge = currentBridges.find(b => b.id === bridgeId);
+            if (!bridge) return;
+
+            editingBridge = bridge;
+            document.getElementById('modal-title').textContent = 'Edit Data Bridge';
+
+            // Populate form
+            document.getElementById('bridge-id').value = bridge.id;
+            document.getElementById('bridge-name').value = bridge.name;
+            document.getElementById('bridge-description').value = bridge.description || '';
+            document.getElementById('bridge-type').value = bridge.type;
+            document.getElementById('bridge-direction').value = bridge.direction;
+
+            updateBridgeTypeConfig();
+
+            // Populate type-specific config
+            if (bridge.type === 'kafka' && bridge.configuration) {
+                const config = bridge.configuration;
+                document.getElementById('kafka-brokers').value = config.brokers?.join(',') || '';
+                document.getElementById('kafka-topics').value = config.topics?.join(',') || '';
+                document.getElementById('kafka-producer-topic').value = config.producer_topic || '';
+                document.getElementById('kafka-consumer-group').value = config.consumer_group || '';
+                document.getElementById('kafka-security-protocol').value = config.security_protocol || 'PLAINTEXT';
+                document.getElementById('kafka-username').value = config.username || '';
+                document.getElementById('kafka-password').value = config.password || '';
+            }
+
+            document.getElementById('bridge-modal').style.display = 'block';
+        }
+
+        function closeBridgeModal() {
+            document.getElementById('bridge-modal').style.display = 'none';
+            editingBridge = null;
+        }
+
+        function updateBridgeTypeConfig() {
+            const type = document.getElementById('bridge-type').value;
+
+            // Hide all config sections
+            document.getElementById('kafka-config').style.display = 'none';
+
+            // Show relevant config section
+            if (type === 'kafka') {
+                document.getElementById('kafka-config').style.display = 'grid';
+            }
+        }
+
+        // Bridge Form Submission
+        document.getElementById('bridge-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const bridgeData = {
+                id: document.getElementById('bridge-id').value,
+                name: document.getElementById('bridge-name').value,
+                description: document.getElementById('bridge-description').value,
+                type: document.getElementById('bridge-type').value,
+                direction: document.getElementById('bridge-direction').value,
+                configuration: {}
+            };
+
+            // Add type-specific configuration
+            if (bridgeData.type === 'kafka') {
+                bridgeData.configuration = {
+                    brokers: document.getElementById('kafka-brokers').value.split(',').map(s => s.trim()),
+                    topics: document.getElementById('kafka-topics').value.split(',').map(s => s.trim()).filter(s => s),
+                    producer_topic: document.getElementById('kafka-producer-topic').value,
+                    consumer_group: document.getElementById('kafka-consumer-group').value,
+                    security_protocol: document.getElementById('kafka-security-protocol').value,
+                    username: document.getElementById('kafka-username').value,
+                    password: document.getElementById('kafka-password').value
+                };
+            }
+
+            try {
+                const url = editingBridge ?
+                    `/api/integration/bridges/${editingBridge.id}` :
+                    '/api/integration/bridges';
+                const method = editingBridge ? 'PUT' : 'POST';
+
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(bridgeData)
+                });
+
+                if (response.ok) {
+                    showAlert(editingBridge ? 'Bridge updated successfully' : 'Bridge created successfully', 'success');
+                    closeBridgeModal();
+                    loadBridges();
+                } else {
+                    const error = await response.text();
+                    showAlert('Failed to save bridge: ' + error, 'error');
+                }
+            } catch (error) {
+                showAlert('Error saving bridge: ' + error.message, 'error');
+            }
+        });
+
+        // Bridge Actions
+        async function toggleBridge(bridgeId, enable) {
+            try {
+                const action = enable ? 'enable' : 'disable';
+                const response = await fetch(`/api/integration/bridges/${bridgeId}/${action}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    showAlert(`Bridge ${action}d successfully`, 'success');
+                    loadBridges();
+                } else {
+                    showAlert(`Failed to ${action} bridge`, 'error');
+                }
+            } catch (error) {
+                showAlert(`Error ${enable ? 'enabling' : 'disabling'} bridge: ` + error.message, 'error');
+            }
+        }
+
+        async function deleteBridge(bridgeId) {
+            if (!confirm('Are you sure you want to delete this bridge?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/integration/bridges/${bridgeId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    showAlert('Bridge deleted successfully', 'success');
+                    loadBridges();
+                } else {
+                    showAlert('Failed to delete bridge', 'error');
+                }
+            } catch (error) {
+                showAlert('Error deleting bridge: ' + error.message, 'error');
+            }
+        }
+
+        // Load Connectors
+        async function loadConnectors() {
+            try {
+                const response = await fetch('/api/integration/connectors');
+                if (response.ok) {
+                    currentConnectors = await response.json();
+                    renderConnectors();
+                } else {
+                    showAlert('Failed to load connectors', 'error');
+                }
+            } catch (error) {
+                showAlert('Error loading connectors: ' + error.message, 'error');
+            }
+        }
+
+        // Render Connectors
+        function renderConnectors() {
+            const container = document.getElementById('connectors-container');
+
+            if (currentConnectors.length === 0) {
+                container.innerHTML = '<div class="empty-state">No connectors available.</div>';
+                return;
+            }
+
+            container.innerHTML = currentConnectors.map(connector => `
+                <div class="connector-card">
+                    <div class="connector-type">${connector.type}</div>
+                    <div><strong>ID:</strong> ${connector.id}</div>
+                    <div class="connector-status">
+                        <div class="status-indicator ${connector.connected ? 'connected' : 'disconnected'}"></div>
+                        ${connector.connected ? 'Connected' : 'Disconnected'}
+                    </div>
+                    <div class="connector-metrics">
+                        <div>Sent: ${connector.metrics?.messages_sent || 0}</div>
+                        <div>Received: ${connector.metrics?.messages_received || 0}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        // Load Metrics
+        async function loadMetrics() {
+            try {
+                const response = await fetch('/api/integration/metrics');
+                if (response.ok) {
+                    const metrics = await response.json();
+                    renderMetrics(metrics);
+                } else {
+                    showAlert('Failed to load metrics', 'error');
+                }
+            } catch (error) {
+                showAlert('Error loading metrics: ' + error.message, 'error');
+            }
+        }
+
+        // Render Metrics
+        function renderMetrics(metrics) {
+            const container = document.getElementById('overall-metrics');
+            container.innerHTML = `
+                <div class="metrics-grid">
+                    <div class="metric">
+                        <div class="metric-value">${metrics.total_bridges || 0}</div>
+                        <div class="metric-label">Total Bridges</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">${metrics.active_bridges || 0}</div>
+                        <div class="metric-label">Active Bridges</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">${metrics.total_connectors || 0}</div>
+                        <div class="metric-label">Total Connectors</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">${metrics.connected_sources || 0}</div>
+                        <div class="metric-label">Connected Sources</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-value">${metrics.total_messages || 0}</div>
+                        <div class="metric-label">Total Messages</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Utility Functions
+        function showAlert(message, type) {
+            const container = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            container.appendChild(alert);
+
+            setTimeout(() => {
+                alert.remove();
+            }, 5000);
+        }
+
+        function refreshData() {
+            const activeTab = document.querySelector('.tab-button.active').textContent.toLowerCase();
+            if (activeTab === 'bridges') {
+                loadBridges();
+            } else if (activeTab === 'connectors') {
+                loadConnectors();
+            } else if (activeTab === 'metrics') {
+                loadMetrics();
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            loadBridges();
+        });
+
+        // Modal click outside to close
+        window.onclick = function(event) {
+            const modal = document.getElementById('bridge-modal');
+            if (event.target === modal) {
+                closeBridgeModal();
+            }
+        }
+    </script>
+</body>
+</html>
