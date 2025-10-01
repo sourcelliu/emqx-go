@@ -34,6 +34,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
+	"github.com/turtacn/emqx-go/pkg/rules"
 	tlspkg "github.com/turtacn/emqx-go/pkg/tls"
 )
 
@@ -48,6 +49,7 @@ type Server struct {
 	healthChecker   *monitor.HealthChecker
 	certificateManager *tlspkg.CertificateManager
 	connectorManager *connector.ConnectorManager
+	ruleEngine      *rules.RuleEngine
 	templates       *template.Template
 	mux             *http.ServeMux
 	config          *Config
@@ -76,7 +78,7 @@ func DefaultConfig() *Config {
 }
 
 // NewServer creates a new dashboard server
-func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker, certManager *tlspkg.CertificateManager, connectorManager *connector.ConnectorManager) (*Server, error) {
+func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker, certManager *tlspkg.CertificateManager, connectorManager *connector.ConnectorManager, ruleEngine *rules.RuleEngine) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -89,6 +91,7 @@ func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metric
 		healthChecker:      healthChecker,
 		certificateManager: certManager,
 		connectorManager:   connectorManager,
+		ruleEngine:         ruleEngine,
 		mux:                mux,
 		config:             config,
 	}
@@ -152,6 +155,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/certificates", s.authMiddleware(s.handleCertificates))
 	s.mux.HandleFunc("/tls-config", s.authMiddleware(s.handleTLSConfig))
 	s.mux.HandleFunc("/connectors", s.authMiddleware(s.handleConnectors))
+	s.mux.HandleFunc("/rules", s.authMiddleware(s.handleRules))
 
 	// Authentication
 	s.mux.HandleFunc("/login", s.handleLogin)
@@ -175,6 +179,12 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/connectors", s.authMiddleware(s.handleAPIConnectors))
 	s.mux.HandleFunc("/api/connectors/", s.authMiddleware(s.handleAPIConnectorByID))
 	s.mux.HandleFunc("/api/connector-types", s.authMiddleware(s.handleAPIConnectorTypes))
+
+	// Rule engine management API endpoints
+	s.mux.HandleFunc("/api/rules", s.authMiddleware(s.handleAPIRules))
+	s.mux.HandleFunc("/api/rules/", s.authMiddleware(s.handleAPIRuleByID))
+	s.mux.HandleFunc("/api/action-types", s.authMiddleware(s.handleAPIActionTypes))
+	s.mux.HandleFunc("/api/action-schemas/", s.authMiddleware(s.handleAPIActionSchema))
 
 	// Proxy admin API endpoints
 	s.mux.Handle("/api/v5/", s.authMiddleware(s.proxyAdminAPI))
@@ -1149,5 +1159,224 @@ func (s *Server) getTLSConfigData() map[string]interface{} {
 			{"value": "serial", "label": "Serial Number"},
 			{"value": "fingerprint", "label": "Fingerprint"},
 		},
+	}
+}
+
+// Rule Engine Management Handlers
+
+// handleRules renders the rules management page
+func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
+	data := s.getRulesData()
+	if err := s.templates.ExecuteTemplate(w, "rules.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+// handleAPIRules handles rule management API requests
+func (s *Server) handleAPIRules(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleAPIGetRules(w, r)
+	case http.MethodPost:
+		s.handleAPICreateRule(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIRuleByID handles individual rule API requests
+func (s *Server) handleAPIRuleByID(w http.ResponseWriter, r *http.Request) {
+	// Extract rule ID from URL
+	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/rules/"), "/")
+	if len(pathParts) == 0 || pathParts[0] == "" {
+		http.Error(w, "Rule ID is required", http.StatusBadRequest)
+		return
+	}
+
+	ruleID := pathParts[0]
+
+	// Handle enable/disable actions
+	if len(pathParts) > 1 {
+		action := pathParts[1]
+		switch action {
+		case "enable":
+			s.handleAPIEnableRule(w, r, ruleID)
+		case "disable":
+			s.handleAPIDisableRule(w, r, ruleID)
+		default:
+			http.Error(w, "Invalid action", http.StatusBadRequest)
+		}
+		return
+	}
+
+	// Handle CRUD operations
+	switch r.Method {
+	case http.MethodGet:
+		s.handleAPIGetRule(w, r, ruleID)
+	case http.MethodPut:
+		s.handleAPIUpdateRule(w, r, ruleID)
+	case http.MethodDelete:
+		s.handleAPIDeleteRule(w, r, ruleID)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIGetRules returns all rules
+func (s *Server) handleAPIGetRules(w http.ResponseWriter, r *http.Request) {
+	rules := s.ruleEngine.ListRules()
+
+	rulesList := make([]map[string]interface{}, 0)
+	for _, rule := range rules {
+		rulesList = append(rulesList, map[string]interface{}{
+			"id":          rule.ID,
+			"name":        rule.Name,
+			"description": rule.Description,
+			"sql":         rule.SQL,
+			"actions":     rule.Actions,
+			"status":      rule.Status,
+			"priority":    rule.Priority,
+			"created_at":  rule.CreatedAt,
+			"updated_at":  rule.UpdatedAt,
+			"metrics":     rule.Metrics,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rulesList)
+}
+
+// handleAPIGetRule returns a specific rule
+func (s *Server) handleAPIGetRule(w http.ResponseWriter, r *http.Request, ruleID string) {
+	rule, err := s.ruleEngine.GetRule(ruleID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rule)
+}
+
+// handleAPICreateRule creates a new rule
+func (s *Server) handleAPICreateRule(w http.ResponseWriter, r *http.Request) {
+	var rule rules.Rule
+	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.ruleEngine.CreateRule(rule); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Rule created successfully"})
+}
+
+// handleAPIUpdateRule updates an existing rule
+func (s *Server) handleAPIUpdateRule(w http.ResponseWriter, r *http.Request, ruleID string) {
+	var rule rules.Rule
+	if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.ruleEngine.UpdateRule(ruleID, rule); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Rule updated successfully"})
+}
+
+// handleAPIDeleteRule deletes a rule
+func (s *Server) handleAPIDeleteRule(w http.ResponseWriter, r *http.Request, ruleID string) {
+	if err := s.ruleEngine.DeleteRule(ruleID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Rule deleted successfully"})
+}
+
+// handleAPIEnableRule enables a rule
+func (s *Server) handleAPIEnableRule(w http.ResponseWriter, r *http.Request, ruleID string) {
+	if err := s.ruleEngine.EnableRule(ruleID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Rule enabled successfully"})
+}
+
+// handleAPIDisableRule disables a rule
+func (s *Server) handleAPIDisableRule(w http.ResponseWriter, r *http.Request, ruleID string) {
+	if err := s.ruleEngine.DisableRule(ruleID); err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Rule disabled successfully"})
+}
+
+// handleAPIActionTypes returns available action types
+func (s *Server) handleAPIActionTypes(w http.ResponseWriter, r *http.Request) {
+	actionTypes := s.ruleEngine.GetActionTypes()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(actionTypes)
+}
+
+// handleAPIActionSchema returns the schema for a specific action type
+func (s *Server) handleAPIActionSchema(w http.ResponseWriter, r *http.Request) {
+	// Extract action type from URL
+	actionType := strings.TrimPrefix(r.URL.Path, "/api/action-schemas/")
+	if actionType == "" {
+		http.Error(w, "Action type is required", http.StatusBadRequest)
+		return
+	}
+
+	schema, err := s.ruleEngine.GetActionSchema(rules.ActionType(actionType))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(schema)
+}
+
+// getRulesData prepares data for rules page
+func (s *Server) getRulesData() map[string]interface{} {
+	rules := s.ruleEngine.ListRules()
+
+	rulesList := make([]map[string]interface{}, 0)
+	for _, rule := range rules {
+		rulesList = append(rulesList, map[string]interface{}{
+			"ID":          rule.ID,
+			"Name":        rule.Name,
+			"Description": rule.Description,
+			"SQL":         rule.SQL,
+			"Actions":     rule.Actions,
+			"Status":      rule.Status,
+			"Priority":    rule.Priority,
+			"CreatedAt":   rule.CreatedAt,
+			"UpdatedAt":   rule.UpdatedAt,
+			"Metrics":     rule.Metrics,
+		})
+	}
+
+	return map[string]interface{}{
+		"Title": "Rules - EMQX Go",
+		"Rules": rulesList,
+		"Count": len(rulesList),
 	}
 }

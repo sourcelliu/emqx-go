@@ -40,6 +40,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/persistent"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 	"github.com/turtacn/emqx-go/pkg/retainer"
+	"github.com/turtacn/emqx-go/pkg/rules"
 	"github.com/turtacn/emqx-go/pkg/session"
 	"github.com/turtacn/emqx-go/pkg/storage"
 	"github.com/turtacn/emqx-go/pkg/storage/messages"
@@ -73,6 +74,12 @@ type Broker struct {
 
 	// Connector management
 	connectorManager *connector.ConnectorManager
+
+	// Rule engine
+	ruleEngine *rules.RuleEngine
+
+	// Republish callback for rule engine
+	republishCallback func(topic string, qos int, payload []byte) error
 
 	mu        sync.RWMutex
 }
@@ -168,6 +175,12 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 		connectorManager:     connector.CreateDefaultConnectorManager(),
 	}
 
+	// Initialize rule engine with connector manager
+	b.ruleEngine = rules.NewRuleEngine(b.connectorManager)
+
+	// Setup republish callback for rule engine
+	b.setupRepublishCallback()
+
 	// Set will message publisher to integrate with broker's publish mechanism
 	sessionMgr.SetWillMessagePublisher(&willMessagePublisher{broker: b})
 
@@ -191,6 +204,65 @@ func (b *Broker) GetAuthChain() *auth.AuthChain {
 // GetCertificateManager returns the certificate manager for configuration
 func (b *Broker) GetCertificateManager() *tlspkg.CertificateManager {
 	return b.certManager
+}
+
+// GetRuleEngine returns the rule engine for configuration
+func (b *Broker) GetRuleEngine() *rules.RuleEngine {
+	return b.ruleEngine
+}
+
+// SetRuleEngine sets the rule engine for the broker
+func (b *Broker) SetRuleEngine(ruleEngine *rules.RuleEngine) {
+	b.ruleEngine = ruleEngine
+	// Set up republish callback
+	b.setupRepublishCallback()
+}
+
+// processMessageThroughRuleEngine processes a message through the rule engine
+func (b *Broker) processMessageThroughRuleEngine(topicName string, payload []byte, qos byte, clientID string, headers map[string]string) {
+	if b.ruleEngine == nil {
+		log.Printf("[DEBUG] Rule engine is nil, skipping rule processing")
+		return
+	}
+	log.Printf("[DEBUG] Processing message through rule engine: topic=%s, payload_size=%d", topicName, len(payload))
+
+	// Create rule context
+	ruleContext := &rules.RuleContext{
+		Topic:     topicName,
+		QoS:       int(qos),
+		Payload:   payload,
+		Headers:   headers,
+		ClientID:  clientID,
+		Username:  "", // Would need to be passed from session context
+		Timestamp: time.Now(),
+		Metadata:  make(map[string]interface{}),
+	}
+
+	// Process message through rule engine
+	ctx := context.Background()
+	if err := b.ruleEngine.ProcessMessage(ctx, ruleContext); err != nil {
+		log.Printf("Rule engine processing error: %v", err)
+	}
+}
+
+// setupRepublishCallback sets up the republish callback for rule engine
+func (b *Broker) setupRepublishCallback() {
+	// Set up a republish callback that integrates with the broker's routing
+	republishCallback := func(topic string, qos int, payload []byte) error {
+		// Use the broker's routing to republish the message
+		b.RouteToLocalSubscribersWithQoS(topic, payload, byte(qos))
+		return nil
+	}
+
+	// Get the republish action executor and set the callback
+	if executor, err := b.ruleEngine.GetActionExecutor(rules.ActionTypeRepublish); err == nil {
+		if republishExecutor, ok := executor.(*rules.RepublishActionExecutor); ok {
+			republishExecutor.SetRepublishCallback(republishCallback)
+		}
+	}
+
+	// Store the callback for use in rule processing
+	b.republishCallback = republishCallback
 }
 
 // SetupCertificateAuth configures X.509 certificate authentication
@@ -1185,6 +1257,15 @@ func (b *Broker) RouteToLocalSubscribersWithUserProperties(topicName string, pay
 // - responseTopic: MQTT 5.0 response topic for request-response pattern.
 // - correlationData: MQTT 5.0 correlation data for request-response pattern.
 func (b *Broker) RouteToLocalSubscribersWithRequestResponse(topicName string, payload []byte, publishQoS byte, userProperties map[string][]byte, responseTopic string, correlationData []byte) {
+	// Process message through rule engine first
+	headers := make(map[string]string)
+	for k, v := range userProperties {
+		if len(v) > 0 {
+			headers[k] = string(v[0])
+		}
+	}
+	b.processMessageThroughRuleEngine(topicName, payload, publishQoS, "", headers)
+
 	subscribers := b.topics.GetSubscribers(topicName)
 	if len(subscribers) > 0 {
 		logMsg := fmt.Sprintf("Routing message on topic '%s' to %d local subscribers (with %d user properties)", topicName, len(subscribers), len(userProperties))
@@ -1226,6 +1307,9 @@ func (b *Broker) RouteToLocalSubscribersWithRequestResponse(topicName string, pa
 // - payload: The message content.
 // - publishQoS: The QoS level of the published message.
 func (b *Broker) RouteToLocalSubscribersWithQoS(topicName string, payload []byte, publishQoS byte) {
+	// Process message through rule engine first
+	b.processMessageThroughRuleEngine(topicName, payload, publishQoS, "", nil)
+
 	subscribers := b.topics.GetSubscribers(topicName)
 	if len(subscribers) > 0 {
 		log.Printf("Routing message on topic '%s' to %d local subscribers", topicName, len(subscribers))
@@ -1558,6 +1642,13 @@ func (b *Broker) Close() error {
 	if b.connectorManager != nil {
 		if err := b.connectorManager.Close(); err != nil {
 			log.Printf("[ERROR] Failed to close connector manager: %v", err)
+		}
+	}
+
+	// Close rule engine
+	if b.ruleEngine != nil {
+		if err := b.ruleEngine.Close(); err != nil {
+			log.Printf("[ERROR] Failed to close rule engine: %v", err)
 		}
 	}
 

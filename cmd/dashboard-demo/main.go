@@ -13,9 +13,11 @@ import (
 
 	"github.com/turtacn/emqx-go/pkg/admin"
 	"github.com/turtacn/emqx-go/pkg/broker"
+	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/dashboard"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
+	"github.com/turtacn/emqx-go/pkg/rules"
 )
 
 func main() {
@@ -40,6 +42,23 @@ func main() {
 	metricsManager := metrics.NewMetricsManager()
 	healthChecker := monitor.NewHealthChecker()
 
+	// Create connector manager
+	connectorManager := connector.NewConnectorManager()
+
+	// Get the rule engine from the broker (they share the same instance)
+	ruleEngine := brokerInstance.GetRuleEngine()
+
+	// Set up republish callback for rule engine
+	republishExecutor, err := ruleEngine.GetActionExecutor(rules.ActionTypeRepublish)
+	if err == nil {
+		if repubExecutor, ok := republishExecutor.(*rules.RepublishActionExecutor); ok {
+			repubExecutor.SetRepublishCallback(func(topic string, qos int, payload []byte) error {
+				brokerInstance.RouteToLocalSubscribersWithQoS(topic, payload, byte(qos))
+				return nil
+			})
+		}
+	}
+
 	// Create a real broker interface instead of mock for production use
 	brokerInterface := &realBrokerInterface{broker: brokerInstance}
 	adminAPI := admin.NewAPIServer(metricsManager, brokerInterface)
@@ -48,7 +67,7 @@ func main() {
 	config := dashboard.DefaultConfig()
 	config.Address = "127.0.0.1"  // Bind to localhost for security
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, brokerInstance.GetCertificateManager())
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, brokerInstance.GetCertificateManager(), connectorManager, ruleEngine)
 	if err != nil {
 		log.Fatalf("Failed to create dashboard server: %v", err)
 	}
@@ -66,6 +85,11 @@ func main() {
 	log.Printf("🔑 Password: public")
 	log.Printf("🚀 MQTT Broker: mqtt://localhost:1883")
 	log.Printf("📈 Metrics: http://localhost:8082/metrics")
+	log.Printf("⚡ Rule Engine: Enabled with Dashboard Management")
+
+	// Add some default test rules for demonstration
+	addDefaultTestRules(ruleEngine)
+
 	log.Printf("Press Ctrl+C to stop...")
 
 	// Wait for termination signal
@@ -78,6 +102,60 @@ func main() {
 	dashboardServer.Stop()
 
 	log.Println("Services stopped.")
+}
+
+// addDefaultTestRules adds some demo rules for testing
+func addDefaultTestRules(ruleEngine *rules.RuleEngine) {
+	// Rule 1: Console action for temperature sensor
+	temperatureRule := rules.Rule{
+		ID:          "demo-temperature-console",
+		Name:        "Temperature Console Logger",
+		Description: "Log temperature sensor data to console",
+		SQL:         "topic = 'sensor/temperature'",
+		Actions: []rules.Action{
+			{
+				Type: rules.ActionTypeConsole,
+				Parameters: map[string]interface{}{
+					"level":    "info",
+					"template": "🌡️  Temperature sensor data: ${payload} from client ${clientid}",
+				},
+			},
+		},
+		Status:   rules.RuleStatusEnabled,
+		Priority: 1,
+	}
+
+	// Rule 2: Console action for any sensor topic
+	sensorRule := rules.Rule{
+		ID:          "demo-sensor-console",
+		Name:        "All Sensors Console Logger",
+		Description: "Log all sensor data to console",
+		SQL:         "topic LIKE 'sensor/%'",
+		Actions: []rules.Action{
+			{
+				Type: rules.ActionTypeConsole,
+				Parameters: map[string]interface{}{
+					"level":    "debug",
+					"template": "📊 Sensor data on ${topic}: ${payload}",
+				},
+			},
+		},
+		Status:   rules.RuleStatusEnabled,
+		Priority: 2,
+	}
+
+	// Add the rules
+	if err := ruleEngine.CreateRule(temperatureRule); err != nil {
+		log.Printf("[WARN] Failed to create temperature rule: %v", err)
+	} else {
+		log.Printf("[INFO] Created demo rule: %s", temperatureRule.ID)
+	}
+
+	if err := ruleEngine.CreateRule(sensorRule); err != nil {
+		log.Printf("[WARN] Failed to create sensor rule: %v", err)
+	} else {
+		log.Printf("[INFO] Created demo rule: %s", sensorRule.ID)
+	}
 }
 
 // Simple broker interface implementation for demo
