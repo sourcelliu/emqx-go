@@ -35,6 +35,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/auth"
 	"github.com/turtacn/emqx-go/pkg/auth/x509"
 	"github.com/turtacn/emqx-go/pkg/cluster"
+	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/persistent"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
@@ -49,7 +50,8 @@ import (
 
 // Broker is the central component of the MQTT server. It acts as the main
 // supervisor for client sessions and handles the core logic of message routing,
-// session management, cluster communication, authentication, and retained messages.
+// session management, cluster communication, authentication, retained messages,
+// and connector management.
 type Broker struct {
 	sup       supervisor.Supervisor
 	sessions  storage.Store
@@ -68,6 +70,9 @@ type Broker struct {
 
 	// Topic alias management for MQTT 5.0
 	topicAliasManagers map[string]*ClientTopicAliasManager
+
+	// Connector management
+	connectorManager *connector.ConnectorManager
 
 	mu        sync.RWMutex
 }
@@ -160,6 +165,7 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 		persistentSessionMgr: sessionMgr,
 		offlineMessageMgr:    offlineMgr,
 		topicAliasManagers:   make(map[string]*ClientTopicAliasManager),
+		connectorManager:     connector.CreateDefaultConnectorManager(),
 	}
 
 	// Set will message publisher to integrate with broker's publish mechanism
@@ -170,6 +176,11 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 		clusterMgr.LocalPublishFunc = b.RouteToLocalSubscribers
 	}
 	return b
+}
+
+// GetConnectorManager returns the connector manager for configuration
+func (b *Broker) GetConnectorManager() *connector.ConnectorManager {
+	return b.connectorManager
 }
 
 // GetAuthChain returns the authentication chain for configuration
@@ -935,6 +946,9 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			// Route the published message to subscribers with request-response properties
 			b.routePublishWithRequestResponse(resolvedTopic, pk.Payload, publishQoS, userProperties, responseTopic, correlationData)
 
+			// Route to connectors for external systems
+			go b.routeToConnectors(resolvedTopic, pk.Payload, publishQoS, userProperties, responseTopic, correlationData)
+
 			// Queue message for offline subscribers
 			matcher := &persistent.BasicTopicMatcher{}
 			if err := b.offlineMessageMgr.QueueMessageForOfflineClients(resolvedTopic, pk.Payload, publishQoS, pk.FixedHeader.Retain, matcher); err != nil {
@@ -1482,9 +1496,70 @@ func (b *Broker) sendRetainedMessages(sessionMailbox *actor.Mailbox, filters []p
 	}
 }
 
+// routeToConnectors routes messages to enabled connectors for external system integration
+func (b *Broker) routeToConnectors(topicName string, payload []byte, qos byte, userProperties map[string][]byte, responseTopic string, correlationData []byte) {
+	if b.connectorManager == nil {
+		return
+	}
+
+	// Get all connectors
+	connectors := b.connectorManager.ListConnectors()
+	if len(connectors) == 0 {
+		return
+	}
+
+	// Create message for connectors
+	msg := &connector.Message{
+		ID:        fmt.Sprintf("msg-%d", time.Now().UnixNano()),
+		Topic:     topicName,
+		Payload:   payload,
+		Headers:   make(map[string]string),
+		Timestamp: time.Now(),
+		Metadata:  make(map[string]interface{}),
+	}
+
+	// Convert user properties to headers
+	for k, v := range userProperties {
+		msg.Headers[k] = string(v)
+	}
+
+	// Add MQTT specific metadata
+	msg.Metadata["qos"] = qos
+	if responseTopic != "" {
+		msg.Metadata["response_topic"] = responseTopic
+	}
+	if len(correlationData) > 0 {
+		msg.Metadata["correlation_data"] = correlationData
+	}
+
+	// Send to all running connectors
+	for id, conn := range connectors {
+		if conn.IsRunning() {
+			go func(connectorID string, connector connector.Connector, message *connector.Message) {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+
+				result, err := connector.Send(ctx, message)
+				if err != nil {
+					log.Printf("[ERROR] Failed to send message to connector %s: %v", connectorID, err)
+				} else if result.Success {
+					log.Printf("[DEBUG] Message sent to connector %s: topic=%s, latency=%v", connectorID, message.Topic, result.Latency)
+				}
+			}(id, conn, msg)
+		}
+	}
+}
+
 // Close shuts down the broker and cleans up resources
 func (b *Broker) Close() error {
 	log.Printf("[INFO] Shutting down broker...")
+
+	// Close connector manager
+	if b.connectorManager != nil {
+		if err := b.connectorManager.Close(); err != nil {
+			log.Printf("[ERROR] Failed to close connector manager: %v", err)
+		}
+	}
 
 	// Close persistent session manager
 	if b.persistentSessionMgr != nil {
