@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/turtacn/emqx-go/pkg/blacklist"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 )
 
@@ -43,6 +44,7 @@ type BrokerInterface interface {
 	KickoutSession(clientID string) error
 	GetNodeInfo() NodeInfo
 	GetClusterNodes() []NodeInfo
+	GetBlacklistMiddleware() *blacklist.BlacklistMiddleware
 }
 
 // ConnectionInfo represents client connection information
@@ -164,6 +166,11 @@ func (s *APIServer) RegisterRoutes(mux *http.ServeMux) {
 	// Node and cluster endpoints
 	mux.HandleFunc("/api/v5/nodes", s.handleNodes)
 	mux.HandleFunc("/api/v5/nodes/", s.handleNodeByID)
+
+	// Blacklist management endpoints
+	mux.HandleFunc("/api/v5/blacklist", s.handleBlacklist)
+	mux.HandleFunc("/api/v5/blacklist/", s.handleBlacklistByID)
+	mux.HandleFunc("/api/v5/blacklist/stats", s.handleBlacklistStats)
 
 	// Health check endpoints
 	mux.HandleFunc("/api/v5/status", s.handleStatus)
@@ -573,6 +580,327 @@ func (s *APIServer) writeJSON(w http.ResponseWriter, statusCode int, data interf
 	}
 }
 
+// handleBlacklist handles /api/v5/blacklist endpoint for listing and creating blacklist entries
+func (s *APIServer) handleBlacklist(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleBlacklistList(w, r)
+	case http.MethodPost:
+		s.handleBlacklistCreate(w, r)
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// handleBlacklistList handles GET /api/v5/blacklist
+func (s *APIServer) handleBlacklistList(w http.ResponseWriter, r *http.Request) {
+	middleware := s.broker.GetBlacklistMiddleware()
+	if middleware == nil {
+		s.writeError(w, http.StatusInternalServerError, "Blacklist middleware not available")
+		return
+	}
+
+	// Parse query parameters
+	entryType := blacklist.BlacklistType(r.URL.Query().Get("type"))
+	enabledStr := r.URL.Query().Get("enabled")
+
+	var enabled *bool
+	if enabledStr != "" {
+		if enabledStr == "true" {
+			enabled = &[]bool{true}[0]
+		} else if enabledStr == "false" {
+			enabled = &[]bool{false}[0]
+		}
+	}
+
+	// Get blacklist entries
+	entries := middleware.GetManager().ListEntries(entryType, enabled)
+
+	// Convert to API response format
+	response := make([]map[string]interface{}, len(entries))
+	for i, entry := range entries {
+		response[i] = map[string]interface{}{
+			"id":          entry.ID,
+			"type":        string(entry.Type),
+			"value":       entry.Value,
+			"pattern":     entry.Pattern,
+			"action":      string(entry.Action),
+			"reason":      entry.Reason,
+			"description": entry.Description,
+			"enabled":     entry.Enabled,
+			"created_at":  entry.CreatedAt,
+			"updated_at":  entry.UpdatedAt,
+			"expires_at":  entry.ExpiresAt,
+			"created_by":  entry.CreatedBy,
+			"metadata":    entry.Metadata,
+		}
+	}
+
+	s.writeSuccess(w, response)
+}
+
+// handleBlacklistCreate handles POST /api/v5/blacklist
+func (s *APIServer) handleBlacklistCreate(w http.ResponseWriter, r *http.Request) {
+	middleware := s.broker.GetBlacklistMiddleware()
+	if middleware == nil {
+		s.writeError(w, http.StatusInternalServerError, "Blacklist middleware not available")
+		return
+	}
+
+	// Parse request body
+	var request struct {
+		Type        string                 `json:"type"`
+		Value       string                 `json:"value"`
+		Pattern     string                 `json:"pattern,omitempty"`
+		Action      string                 `json:"action"`
+		Reason      string                 `json:"reason,omitempty"`
+		Description string                 `json:"description,omitempty"`
+		Enabled     bool                   `json:"enabled"`
+		ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
+		CreatedBy   string                 `json:"created_by,omitempty"`
+		Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON format")
+		return
+	}
+
+	// Validate required fields
+	if request.Type == "" {
+		s.writeError(w, http.StatusBadRequest, "Type is required")
+		return
+	}
+	if request.Value == "" && request.Pattern == "" {
+		s.writeError(w, http.StatusBadRequest, "Either value or pattern is required")
+		return
+	}
+	if request.Action == "" {
+		s.writeError(w, http.StatusBadRequest, "Action is required")
+		return
+	}
+
+	// Create blacklist entry
+	entry := &blacklist.BlacklistEntry{
+		ID:          fmt.Sprintf("%s_%d", request.Type, time.Now().UnixNano()),
+		Type:        blacklist.BlacklistType(request.Type),
+		Value:       request.Value,
+		Pattern:     request.Pattern,
+		Action:      blacklist.BlacklistAction(request.Action),
+		Reason:      request.Reason,
+		Description: request.Description,
+		Enabled:     request.Enabled,
+		ExpiresAt:   request.ExpiresAt,
+		CreatedBy:   request.CreatedBy,
+		Metadata:    request.Metadata,
+	}
+
+	// Add to blacklist manager
+	if err := middleware.GetManager().AddEntry(entry); err != nil {
+		s.writeError(w, http.StatusBadRequest, fmt.Sprintf("Failed to add blacklist entry: %v", err))
+		return
+	}
+
+	// Return created entry
+	response := map[string]interface{}{
+		"id":          entry.ID,
+		"type":        string(entry.Type),
+		"value":       entry.Value,
+		"pattern":     entry.Pattern,
+		"action":      string(entry.Action),
+		"reason":      entry.Reason,
+		"description": entry.Description,
+		"enabled":     entry.Enabled,
+		"created_at":  entry.CreatedAt,
+		"updated_at":  entry.UpdatedAt,
+		"expires_at":  entry.ExpiresAt,
+		"created_by":  entry.CreatedBy,
+		"metadata":    entry.Metadata,
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	s.writeSuccess(w, response)
+}
+
+// handleBlacklistByID handles /api/v5/blacklist/{id} endpoint
+func (s *APIServer) handleBlacklistByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v5/blacklist/")
+	pathParts := strings.Split(path, "/")
+
+	if len(pathParts) == 0 || pathParts[0] == "" {
+		s.writeError(w, http.StatusBadRequest, "Blacklist entry ID is required")
+		return
+	}
+
+	entryID := pathParts[0]
+
+	switch r.Method {
+	case http.MethodGet:
+		s.handleBlacklistGetByID(w, r, entryID)
+	case http.MethodPut:
+		s.handleBlacklistUpdate(w, r, entryID)
+	case http.MethodDelete:
+		s.handleBlacklistDelete(w, r, entryID)
+	default:
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+	}
+}
+
+// handleBlacklistGetByID handles GET /api/v5/blacklist/{id}
+func (s *APIServer) handleBlacklistGetByID(w http.ResponseWriter, r *http.Request, entryID string) {
+	middleware := s.broker.GetBlacklistMiddleware()
+	if middleware == nil {
+		s.writeError(w, http.StatusInternalServerError, "Blacklist middleware not available")
+		return
+	}
+
+	entry, err := middleware.GetManager().GetEntry(entryID)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Blacklist entry not found")
+		return
+	}
+
+	response := map[string]interface{}{
+		"id":          entry.ID,
+		"type":        string(entry.Type),
+		"value":       entry.Value,
+		"pattern":     entry.Pattern,
+		"action":      string(entry.Action),
+		"reason":      entry.Reason,
+		"description": entry.Description,
+		"enabled":     entry.Enabled,
+		"created_at":  entry.CreatedAt,
+		"updated_at":  entry.UpdatedAt,
+		"expires_at":  entry.ExpiresAt,
+		"created_by":  entry.CreatedBy,
+		"metadata":    entry.Metadata,
+	}
+
+	s.writeSuccess(w, response)
+}
+
+// handleBlacklistUpdate handles PUT /api/v5/blacklist/{id}
+func (s *APIServer) handleBlacklistUpdate(w http.ResponseWriter, r *http.Request, entryID string) {
+	middleware := s.broker.GetBlacklistMiddleware()
+	if middleware == nil {
+		s.writeError(w, http.StatusInternalServerError, "Blacklist middleware not available")
+		return
+	}
+
+	// Parse request body
+	var request struct {
+		Value       string                 `json:"value,omitempty"`
+		Pattern     string                 `json:"pattern,omitempty"`
+		Action      string                 `json:"action,omitempty"`
+		Reason      string                 `json:"reason,omitempty"`
+		Description string                 `json:"description,omitempty"`
+		Enabled     *bool                  `json:"enabled,omitempty"`
+		ExpiresAt   *time.Time             `json:"expires_at,omitempty"`
+		Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+		s.writeError(w, http.StatusBadRequest, "Invalid JSON format")
+		return
+	}
+
+	// Get existing entry
+	existingEntry, err := middleware.GetManager().GetEntry(entryID)
+	if err != nil {
+		s.writeError(w, http.StatusNotFound, "Blacklist entry not found")
+		return
+	}
+
+	// Create updated entry
+	updatedEntry := *existingEntry
+	if request.Value != "" {
+		updatedEntry.Value = request.Value
+	}
+	if request.Pattern != "" {
+		updatedEntry.Pattern = request.Pattern
+	}
+	if request.Action != "" {
+		updatedEntry.Action = blacklist.BlacklistAction(request.Action)
+	}
+	if request.Reason != "" {
+		updatedEntry.Reason = request.Reason
+	}
+	if request.Description != "" {
+		updatedEntry.Description = request.Description
+	}
+	if request.Enabled != nil {
+		updatedEntry.Enabled = *request.Enabled
+	}
+	if request.ExpiresAt != nil {
+		updatedEntry.ExpiresAt = request.ExpiresAt
+	}
+	if request.Metadata != nil {
+		updatedEntry.Metadata = request.Metadata
+	}
+
+	// Update entry
+	if err := middleware.GetManager().UpdateEntry(entryID, &updatedEntry); err != nil {
+		s.writeError(w, http.StatusBadRequest, fmt.Sprintf("Failed to update blacklist entry: %v", err))
+		return
+	}
+
+	// Return updated entry
+	response := map[string]interface{}{
+		"id":          updatedEntry.ID,
+		"type":        string(updatedEntry.Type),
+		"value":       updatedEntry.Value,
+		"pattern":     updatedEntry.Pattern,
+		"action":      string(updatedEntry.Action),
+		"reason":      updatedEntry.Reason,
+		"description": updatedEntry.Description,
+		"enabled":     updatedEntry.Enabled,
+		"created_at":  updatedEntry.CreatedAt,
+		"updated_at":  updatedEntry.UpdatedAt,
+		"expires_at":  updatedEntry.ExpiresAt,
+		"created_by":  updatedEntry.CreatedBy,
+		"metadata":    updatedEntry.Metadata,
+	}
+
+	s.writeSuccess(w, response)
+}
+
+// handleBlacklistDelete handles DELETE /api/v5/blacklist/{id}
+func (s *APIServer) handleBlacklistDelete(w http.ResponseWriter, r *http.Request, entryID string) {
+	middleware := s.broker.GetBlacklistMiddleware()
+	if middleware == nil {
+		s.writeError(w, http.StatusInternalServerError, "Blacklist middleware not available")
+		return
+	}
+
+	if err := middleware.GetManager().RemoveEntry(entryID); err != nil {
+		if err.Error() == "blacklist entry not found" {
+			s.writeError(w, http.StatusNotFound, "Blacklist entry not found")
+		} else {
+			s.writeError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to delete blacklist entry: %v", err))
+		}
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleBlacklistStats handles GET /api/v5/blacklist/stats
+func (s *APIServer) handleBlacklistStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		s.writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
+		return
+	}
+
+	middleware := s.broker.GetBlacklistMiddleware()
+	if middleware == nil {
+		s.writeError(w, http.StatusInternalServerError, "Blacklist middleware not available")
+		return
+	}
+
+	stats := middleware.GetStats()
+	s.writeSuccess(w, stats)
+}
+
 func (s *APIServer) extractIDFromPath(path, prefix string) string {
 	if !strings.HasPrefix(path, prefix) {
 		return ""
@@ -614,6 +942,7 @@ func Serve(addr string, metricsManager *metrics.MetricsManager, broker BrokerInt
 	fmt.Printf("  - /api/v5/subscriptions (subscription management)\n")
 	fmt.Printf("  - /api/v5/routes (routing information)\n")
 	fmt.Printf("  - /api/v5/nodes (cluster nodes)\n")
+	fmt.Printf("  - /api/v5/blacklist (blacklist management)\n")
 	fmt.Printf("  - /api/v5/status (broker status)\n")
 	fmt.Printf("  - /health (health check)\n")
 

@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/turtacn/emqx-go/pkg/admin"
+	"github.com/turtacn/emqx-go/pkg/blacklist"
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/dashboard"
@@ -108,6 +109,11 @@ func (t *testBrokerInterface) GetNodeInfo() admin.NodeInfo {
 		Uptime:     3600,
 		Datetime:   time.Now(),
 	}
+}
+
+func (t *testBrokerInterface) GetBlacklistMiddleware() *blacklist.BlacklistMiddleware {
+	// Return nil for basic test broker interface
+	return nil
 }
 
 func TestDashboardBasicFunctionality(t *testing.T) {

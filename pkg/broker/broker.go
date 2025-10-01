@@ -34,6 +34,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/actor"
 	"github.com/turtacn/emqx-go/pkg/auth"
 	"github.com/turtacn/emqx-go/pkg/auth/x509"
+	"github.com/turtacn/emqx-go/pkg/blacklist"
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/integration"
@@ -81,6 +82,9 @@ type Broker struct {
 
 	// Data integration engine
 	integrationEngine *integration.DataIntegrationEngine
+
+	// Blacklist middleware
+	blacklistMiddleware *blacklist.BlacklistMiddleware
 
 	// Republish callback for rule engine
 	republishCallback func(topic string, qos int, payload []byte) error
@@ -185,6 +189,11 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	// Initialize data integration engine
 	b.integrationEngine = integration.NewDataIntegrationEngine()
 
+	// Initialize blacklist middleware
+	blacklistManager := blacklist.NewBlacklistManager()
+	blacklistConfig := blacklist.DefaultMiddlewareConfig()
+	b.blacklistMiddleware = blacklist.NewBlacklistMiddleware(blacklistManager, blacklistConfig)
+
 	// Setup republish callback for rule engine
 	b.setupRepublishCallback()
 
@@ -216,6 +225,11 @@ func (b *Broker) GetCertificateManager() *tlspkg.CertificateManager {
 // GetRuleEngine returns the rule engine for configuration
 func (b *Broker) GetRuleEngine() *rules.RuleEngine {
 	return b.ruleEngine
+}
+
+// GetBlacklistMiddleware returns the blacklist middleware for configuration
+func (b *Broker) GetBlacklistMiddleware() *blacklist.BlacklistMiddleware {
+	return b.blacklistMiddleware
 }
 
 // SetRuleEngine sets the rule engine for the broker
@@ -772,6 +786,28 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Printf("[DEBUG] Password provided: %t", password != "")
 			}
 
+			// Check blacklist before authentication
+			clientIP := strings.Split(conn.RemoteAddr().String(), ":")[0]
+			allowed, reason, err := b.blacklistMiddleware.CheckClientConnection(clientID, username, clientIP, "mqtt")
+			if err != nil {
+				log.Printf("[ERROR] Blacklist check error for client %s: %v", clientID, err)
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Connack},
+					ReasonCode:  0x80, // Unspecified error
+				}
+				writePacket(conn, &resp)
+				return
+			}
+			if !allowed {
+				log.Printf("[WARN] Client %s blocked by blacklist: %s", clientID, reason)
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Connack},
+					ReasonCode:  0x82, // Not authorized
+				}
+				writePacket(conn, &resp)
+				return
+			}
+
 			// Perform authentication
 			authResult := b.authChain.Authenticate(username, password)
 			log.Printf("[DEBUG] Authentication result for client %s (user: %s): %s", clientID, username, authResult.String())
@@ -920,6 +956,22 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 					continue
 				}
 
+				// Check blacklist for topic subscribe access
+				clientIP := strings.Split(conn.RemoteAddr().String(), ":")[0]
+				var username string
+				// Similar to PUBLISH, we use empty username for now
+				allowed, reason, err := b.blacklistMiddleware.CheckSubscribeAccess(clientID, username, clientIP, sub.Filter)
+				if err != nil {
+					log.Printf("[ERROR] Blacklist check error for client %s subscribing to %s: %v", clientID, sub.Filter, err)
+					reasonCodes = append(reasonCodes, 0x80) // Unspecified error
+					continue
+				}
+				if !allowed {
+					log.Printf("[WARN] Client %s blocked from subscribing to topic %s: %s", clientID, sub.Filter, reason)
+					reasonCodes = append(reasonCodes, 0x87) // Not authorized
+					continue
+				}
+
 				// Validate QoS level (MQTT spec allows 0, 1, 2 only)
 				grantedQoS := sub.Qos
 				if sub.Qos > 2 {
@@ -1043,6 +1095,36 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 			log.Printf("[DEBUG] PUBLISH received from client %s: topic=%s, resolved_topic=%s, qos=%d, retain=%t, payload_size=%d, user_props=%d, topic_alias=%d, response_topic=%s",
 				clientID, pk.TopicName, resolvedTopic, publishQoS, pk.FixedHeader.Retain, len(pk.Payload), len(userProperties), pk.Properties.TopicAlias, responseTopic)
+
+			// Check blacklist for topic publish access
+			clientIP := strings.Split(conn.RemoteAddr().String(), ":")[0]
+			var username string
+			// Try to extract username from session (this is a simplified approach)
+			// In a real implementation, you'd store the username in the session context
+			// For now, we'll use empty string but the blacklist middleware can still check clientID and IP
+			allowed, reason, err := b.blacklistMiddleware.CheckPublishAccess(clientID, username, clientIP, resolvedTopic)
+			if err != nil {
+				log.Printf("[ERROR] Blacklist check error for client %s publishing to %s: %v", clientID, resolvedTopic, err)
+			} else if !allowed {
+				log.Printf("[WARN] Client %s blocked from publishing to topic %s: %s", clientID, resolvedTopic, reason)
+				// For PUBLISH, we don't send a response packet for QoS 0, but we do for QoS 1 and 2
+				if publishQoS > 0 {
+					// Send PUBACK or PUBREC with appropriate reason code
+					var respType byte
+					if publishQoS == 1 {
+						respType = packets.Puback
+					} else {
+						respType = packets.Pubrec
+					}
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: respType},
+						PacketID:    pk.PacketID,
+						ReasonCode:  0x87, // Not authorized
+					}
+					writePacket(conn, &resp)
+				}
+				return
+			}
 
 			// Handle retained messages
 			if pk.FixedHeader.Retain {

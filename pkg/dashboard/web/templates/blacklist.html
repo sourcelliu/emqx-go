@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX Go Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="/connections">Connections</a>
+                    <a href="/sessions">Sessions</a>
+                    <a href="/subscriptions">Subscriptions</a>
+                    <a href="/blacklist" class="active">Blacklist</a>
+                    <a href="/certificates">Certificates</a>
+                    <a href="/tls-config">TLS Config</a>
+                    <a href="/connectors">Connectors</a>
+                    <a href="/rules">Rules</a>
+                    <a href="/monitoring">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, admin</span>
+                    <a href="/logout" class="btn btn-small">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">Blacklist Management</h1>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <button id="add-entry-btn" class="btn btn-primary">Add Entry</button>
+                    <button id="refresh-btn" class="btn btn-secondary btn-small">Refresh</button>
+                    <span style="font-size: 0.9rem; color: #666;">Total: {{.Count}} entries</span>
+                </div>
+            </div>
+
+            <!-- Statistics Cards -->
+            <div class="dashboard-grid" style="margin-bottom: 2rem;">
+                <div class="metric-card">
+                    <div class="metric-title">Total Entries</div>
+                    <div class="metric-value" id="blacklist-total">{{.Stats.TotalEntries}}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Client ID</div>
+                    <div class="metric-value" id="blacklist-clientid">{{index .Stats.EntriesByType "clientid"}}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Username</div>
+                    <div class="metric-value" id="blacklist-username">{{index .Stats.EntriesByType "username"}}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">IP Address</div>
+                    <div class="metric-value" id="blacklist-ip">{{index .Stats.EntriesByType "ip"}}</div>
+                </div>
+                <div class="metric-card">
+                    <div class="metric-title">Topic</div>
+                    <div class="metric-value" id="blacklist-topic">{{index .Stats.EntriesByType "topic"}}</div>
+                </div>
+            </div>
+
+            <!-- Filter Section -->
+            <div class="card" style="margin-bottom: 1rem;">
+                <div class="card-content" style="padding: 1rem;">
+                    <div style="display: flex; gap: 1rem; align-items: center; flex-wrap: wrap;">
+                        <label style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span>Type:</span>
+                            <select id="type-filter" style="padding: 0.5rem; border: 1px solid #d9d9d9; border-radius: 4px;">
+                                <option value="">All Types</option>
+                                <option value="clientid">Client ID</option>
+                                <option value="username">Username</option>
+                                <option value="ip">IP Address</option>
+                                <option value="topic">Topic</option>
+                            </select>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 0.5rem;">
+                            <span>Action:</span>
+                            <select id="action-filter" style="padding: 0.5rem; border: 1px solid #d9d9d9; border-radius: 4px;">
+                                <option value="">All Actions</option>
+                                <option value="deny">Deny</option>
+                                <option value="log">Log Only</option>
+                            </select>
+                        </label>
+                        <input type="search" id="search-input" placeholder="Search by value or reason..."
+                               style="padding: 0.5rem; border: 1px solid #d9d9d9; border-radius: 4px; width: 300px;">
+                        <button id="filter-btn" class="btn btn-primary btn-small">Filter</button>
+                        <button id="clear-filters-btn" class="btn btn-secondary btn-small">Clear</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Blacklist Entries Table -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Blacklist Entries</h2>
+                </div>
+                <div class="card-content">
+                    <div style="overflow-x: auto;">
+                        <table class="table" id="blacklist-table">
+                            <thead>
+                                <tr>
+                                    <th>Type</th>
+                                    <th>Value/Pattern</th>
+                                    <th>Action</th>
+                                    <th>Reason</th>
+                                    <th>Status</th>
+                                    <th>Created At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {{if .BlacklistEntries}}
+                                {{range .BlacklistEntries}}
+                                <tr data-entry-id="{{.ID}}">
+                                    <td>
+                                        <span class="badge badge-{{.Type}}">{{.Type}}</span>
+                                    </td>
+                                    <td>{{.Value}}</td>
+                                    <td>
+                                        <span class="action-{{.Action}}">{{.Action}}</span>
+                                    </td>
+                                    <td title="{{.Reason}}">
+                                        {{if gt (len .Reason) 50}}
+                                            {{slice .Reason 0 50}}...
+                                        {{else}}
+                                            {{.Reason}}
+                                        {{end}}
+                                    </td>
+                                    <td>
+                                        {{if .Enabled}}
+                                            <span class="status online">Enabled</span>
+                                        {{else}}
+                                            <span class="status offline">Disabled</span>
+                                        {{end}}
+                                    </td>
+                                    <td>{{.CreatedAt}}</td>
+                                    <td>
+                                        <div style="display: flex; gap: 0.5rem;">
+                                            <button class="btn btn-primary btn-small edit-btn" data-id="{{.ID}}">
+                                                Edit
+                                            </button>
+                                            {{if .Enabled}}
+                                                <button class="btn btn-warning btn-small toggle-btn" data-id="{{.ID}}" data-action="disable">
+                                                    Disable
+                                                </button>
+                                            {{else}}
+                                                <button class="btn btn-success btn-small toggle-btn" data-id="{{.ID}}" data-action="enable">
+                                                    Enable
+                                                </button>
+                                            {{end}}
+                                            <button class="btn btn-danger btn-small delete-btn" data-id="{{.ID}}">
+                                                Delete
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {{end}}
+                                {{else}}
+                                <tr>
+                                    <td colspan="7" style="text-align: center; color: #666; padding: 2rem;">
+                                        No blacklist entries found
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Add/Edit Entry Modal -->
+    <div id="entry-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Add Blacklist Entry</h3>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="entry-form">
+                    <div class="form-group">
+                        <label for="entry-type">Type *</label>
+                        <select id="entry-type" name="type" required>
+                            {{range .Types}}
+                            <option value="{{.value}}">{{.label}}</option>
+                            {{end}}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="entry-value">Value *</label>
+                        <input type="text" id="entry-value" name="value" required
+                               placeholder="Enter client ID, username, IP address, or topic">
+                        <small>For pattern matching, use regular expressions (e.g., bot_.* for client IDs starting with 'bot_')</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="entry-pattern">Pattern (Optional)</label>
+                        <input type="text" id="entry-pattern" name="pattern"
+                               placeholder="Regular expression pattern">
+                        <small>Leave empty to use exact matching, or enter a regex pattern for flexible matching</small>
+                    </div>
+                    <div class="form-group">
+                        <label for="entry-action">Action *</label>
+                        <select id="entry-action" name="action" required>
+                            {{range .Actions}}
+                            <option value="{{.value}}">{{.label}}</option>
+                            {{end}}
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="entry-reason">Reason *</label>
+                        <input type="text" id="entry-reason" name="reason" required
+                               placeholder="Reason for blacklisting">
+                    </div>
+                    <div class="form-group">
+                        <label for="entry-description">Description</label>
+                        <textarea id="entry-description" name="description" rows="3"
+                                  placeholder="Additional description (optional)"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="entry-expires">Expires At (Optional)</label>
+                        <input type="datetime-local" id="entry-expires" name="expires_at">
+                        <small>Leave empty for permanent entry</small>
+                    </div>
+                    <div class="form-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="entry-enabled" name="enabled" checked>
+                            Enable immediately
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="modal-cancel">Cancel</button>
+                <button type="submit" class="btn btn-primary" id="modal-save" form="entry-form">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/blacklist.js"></script>
+</body>
+</html>
