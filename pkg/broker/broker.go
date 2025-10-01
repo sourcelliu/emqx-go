@@ -533,14 +533,21 @@ func (b *Broker) handleTLSConnection(ctx context.Context, conn net.Conn) {
 			log.Printf("[DEBUG] TLS CONNECT packet received from %s - ClientID: '%s'", conn.RemoteAddr(), clientID)
 			log.Printf("[DEBUG] TLS CONNECT details - CleanSession: %t, KeepAlive: %d", cleanSession, pk.Connect.Keepalive)
 
+			// MQTT Protocol compliance: Check client ID validity (TLS)
 			if clientID == "" {
-				log.Printf("[ERROR] TLS CONNECT from %s has empty client ID. Closing connection.", conn.RemoteAddr())
-				resp := packets.Packet{
-					FixedHeader: packets.FixedHeader{Type: packets.Connack},
-					ReasonCode:  0x85, // Client Identifier not valid
+				// According to MQTT 3.1.1, if clientID is empty and cleanSession is false, reject connection
+				if !cleanSession {
+					log.Printf("[ERROR] TLS CONNECT from %s has empty client ID with cleanSession=false. Protocol violation.", conn.RemoteAddr())
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x85, // Client Identifier not valid
+					}
+					writePacket(conn, &resp)
+					return
 				}
-				writePacket(conn, &resp)
-				return
+				// Generate a unique client ID for clean session clients
+				clientID = generateClientID()
+				log.Printf("[INFO] Generated client ID '%s' for empty clientID with cleanSession=true (TLS)", clientID)
 			}
 
 			// Handle authentication - prioritize certificate authentication if successful
@@ -640,6 +647,28 @@ func (b *Broker) handleTLSConnection(ctx context.Context, conn net.Conn) {
 				willPayload := pk.Connect.WillPayload
 				willQoS := pk.Connect.WillQos
 				willRetain := pk.Connect.WillRetain
+
+				// MQTT Protocol compliance: Validate Will message format
+				if len(willTopic) == 0 {
+					log.Printf("[ERROR] TLS CONNECT from %s has Will flag but empty will topic. Protocol violation.", conn.RemoteAddr())
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x85, // Client Identifier not valid (used for protocol violations)
+					}
+					writePacket(conn, &resp)
+					return
+				}
+
+				// Validate Will QoS
+				if willQoS > 2 {
+					log.Printf("[ERROR] TLS CONNECT from %s has invalid Will QoS %d. Protocol violation.", conn.RemoteAddr(), willQoS)
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x85, // Client Identifier not valid (used for protocol violations)
+					}
+					writePacket(conn, &resp)
+					return
+				}
 
 				err = b.persistentSessionMgr.SetWillMessage(clientID, willTopic, willPayload, willQoS, willRetain, 0)
 				if err != nil {
@@ -765,14 +794,21 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			log.Printf("[DEBUG] CONNECT packet received from %s - ClientID: '%s'", conn.RemoteAddr(), clientID)
 			log.Printf("[DEBUG] CONNECT details - CleanSession: %t, KeepAlive: %d", cleanSession, pk.Connect.Keepalive)
 
+			// MQTT Protocol compliance: Check client ID validity
 			if clientID == "" {
-				log.Printf("[ERROR] CONNECT from %s has empty client ID. Closing connection.", conn.RemoteAddr())
-				resp := packets.Packet{
-					FixedHeader: packets.FixedHeader{Type: packets.Connack},
-					ReasonCode:  0x85, // Client Identifier not valid
+				// According to MQTT 3.1.1, if clientID is empty and cleanSession is false, reject connection
+				if !cleanSession {
+					log.Printf("[ERROR] CONNECT from %s has empty client ID with cleanSession=false. Protocol violation.", conn.RemoteAddr())
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x85, // Client Identifier not valid
+					}
+					writePacket(conn, &resp)
+					return
 				}
-				writePacket(conn, &resp)
-				return
+				// Generate a unique client ID for clean session clients
+				clientID = generateClientID()
+				log.Printf("[INFO] Generated client ID '%s' for empty clientID with cleanSession=true", clientID)
 			}
 
 			// Extract username and password from CONNECT packet
@@ -888,6 +924,28 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				willPayload := pk.Connect.WillPayload
 				willQoS := pk.Connect.WillQos
 				willRetain := pk.Connect.WillRetain
+
+				// MQTT Protocol compliance: Validate Will message format
+				if len(willTopic) == 0 {
+					log.Printf("[ERROR] CONNECT from %s has Will flag but empty will topic. Protocol violation.", conn.RemoteAddr())
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x85, // Client Identifier not valid (used for protocol violations)
+					}
+					writePacket(conn, &resp)
+					return
+				}
+
+				// Validate will QoS (must be 0, 1, or 2)
+				if willQoS > 2 {
+					log.Printf("[ERROR] CONNECT from %s has invalid will QoS: %d. Protocol violation.", conn.RemoteAddr(), willQoS)
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x9A, // QoS not supported
+					}
+					writePacket(conn, &resp)
+					return
+				}
 
 				err = b.persistentSessionMgr.SetWillMessage(clientID, willTopic, willPayload, willQoS, willRetain, 0)
 				if err != nil {
@@ -1043,6 +1101,33 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			}
 
 		case packets.Publish:
+			// Check message size limit (MQTT spec recommends broker-specific limits)
+			const maxMessageSize = 1024 * 1024 // 1MB limit
+			if len(pk.Payload) > maxMessageSize {
+				log.Printf("[ERROR] PUBLISH from client %s exceeds size limit: %d bytes (max: %d)",
+					clientID, len(pk.Payload), maxMessageSize)
+
+				// Send appropriate response based on QoS
+				if pk.FixedHeader.Qos > 0 {
+					var respType byte
+					var reasonCode byte = 0x97 // Payload format invalid or message too large
+
+					if pk.FixedHeader.Qos == 1 {
+						respType = packets.Puback
+					} else {
+						respType = packets.Pubrec
+					}
+
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: respType},
+						PacketID:    pk.PacketID,
+						ReasonCode:  reasonCode,
+					}
+					writePacket(conn, &resp)
+				}
+				return
+			}
+
 			// Validate QoS level for publish (MQTT spec allows 0, 1, 2 only)
 			publishQoS := pk.FixedHeader.Qos
 			if pk.FixedHeader.Qos > 2 {
@@ -1874,4 +1959,13 @@ func (wmp *willMessagePublisher) PublishWillMessage(ctx context.Context, willMsg
 
 	log.Printf("[INFO] Successfully published will message from client %s to topic %s", clientID, willMsg.Topic)
 	return nil
+}
+
+// generateClientID generates a unique client ID for clients with empty client IDs
+func generateClientID() string {
+	// Generate a random client ID similar to what standard MQTT brokers do
+	// Using current timestamp and random string for uniqueness
+	timestamp := fmt.Sprintf("%d", time.Now().UnixNano())
+	random := fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFF)
+	return fmt.Sprintf("auto-%s-%s", timestamp[len(timestamp)-8:], random)
 }
