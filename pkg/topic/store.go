@@ -15,11 +15,11 @@
 // Package topic provides a thread-safe, in-memory data structure for managing
 // MQTT topic subscriptions. It maps topic strings to a list of subscriber
 // mailboxes, enabling the broker to efficiently route messages to the correct
-// recipients. This implementation is simplified and does not currently support
-// MQTT topic wildcards.
+// recipients. This implementation supports MQTT topic wildcards (+ and #).
 package topic
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/turtacn/emqx-go/pkg/actor"
@@ -84,19 +84,91 @@ func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 }
 
 // GetSubscribers returns a slice of all subscriptions for a specific topic.
-//
-// Note: This is a simplified implementation for the proof-of-concept and does
-// not support MQTT wildcards (+ or #). It only performs exact string matches.
+// This method now supports MQTT wildcards (+ for single-level, # for multi-level).
 //
 // - topic: The topic for which to retrieve subscribers.
 //
-// Returns a copy of the slice of subscriber subscriptions.
+// Returns a copy of the slice of subscriber subscriptions that match the topic.
 func (s *Store) GetSubscribers(topic string) []*Subscription {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Return a copy to prevent race conditions on the slice itself.
-	subs := s.subscriptions[topic]
-	subsCopy := make([]*Subscription, len(subs))
-	copy(subsCopy, subs)
+
+	var allSubs []*Subscription
+
+	// Check all stored subscription patterns
+	for subTopic, subs := range s.subscriptions {
+		if matchesTopicFilter(topic, subTopic) {
+			allSubs = append(allSubs, subs...)
+		}
+	}
+
+	// Return a copy to prevent race conditions
+	subsCopy := make([]*Subscription, len(allSubs))
+	copy(subsCopy, allSubs)
 	return subsCopy
+}
+
+// matchesTopicFilter checks if a published topic matches a subscription topic filter.
+// Implements MQTT 3.1.1 specification for topic matching with wildcards:
+// - '+' matches exactly one level
+// - '#' matches zero or more levels and must be the last character
+//
+// Examples:
+// - "sensor/+/temperature" matches "sensor/room1/temperature" but not "sensor/room1/sub/temperature"
+// - "sensor/#" matches "sensor", "sensor/room1", "sensor/room1/temperature", etc.
+// - "sensor/room1/temperature" matches exactly "sensor/room1/temperature"
+//
+// Parameters:
+// - publishTopic: The topic name used when publishing a message
+// - filterTopic: The topic filter used in subscription (may contain wildcards)
+//
+// Returns true if the published topic matches the subscription filter.
+func matchesTopicFilter(publishTopic, filterTopic string) bool {
+	// Exact match (common case, optimize for it)
+	if publishTopic == filterTopic {
+		return true
+	}
+
+	// If no wildcards in filter, it's just a string comparison
+	if !strings.ContainsAny(filterTopic, "+#") {
+		return publishTopic == filterTopic
+	}
+
+	// Split topics into levels
+	pubLevels := strings.Split(publishTopic, "/")
+	filterLevels := strings.Split(filterTopic, "/")
+
+	// Handle multi-level wildcard '#'
+	// Must be last level and matches everything from that point
+	if len(filterLevels) > 0 && filterLevels[len(filterLevels)-1] == "#" {
+		// Remove the '#' and check if remaining levels match
+		filterLevels = filterLevels[:len(filterLevels)-1]
+
+		// If published topic has fewer levels than filter (minus #), no match
+		if len(pubLevels) < len(filterLevels) {
+			return false
+		}
+
+		// Check all levels before the '#'
+		for i := 0; i < len(filterLevels); i++ {
+			if filterLevels[i] != "+" && filterLevels[i] != pubLevels[i] {
+				return false
+			}
+		}
+		return true
+	}
+
+	// For single-level wildcards '+', levels must match exactly in count
+	if len(pubLevels) != len(filterLevels) {
+		return false
+	}
+
+	// Check each level
+	for i := 0; i < len(filterLevels); i++ {
+		if filterLevels[i] != "+" && filterLevels[i] != pubLevels[i] {
+			return false
+		}
+	}
+
+	return true
 }
