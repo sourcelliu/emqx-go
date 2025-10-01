@@ -36,6 +36,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/auth/x509"
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/connector"
+	"github.com/turtacn/emqx-go/pkg/integration"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/persistent"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
@@ -77,6 +78,9 @@ type Broker struct {
 
 	// Rule engine
 	ruleEngine *rules.RuleEngine
+
+	// Data integration engine
+	integrationEngine *integration.DataIntegrationEngine
 
 	// Republish callback for rule engine
 	republishCallback func(topic string, qos int, payload []byte) error
@@ -178,6 +182,9 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 	// Initialize rule engine with connector manager
 	b.ruleEngine = rules.NewRuleEngine(b.connectorManager)
 
+	// Initialize data integration engine
+	b.integrationEngine = integration.NewDataIntegrationEngine()
+
 	// Setup republish callback for rule engine
 	b.setupRepublishCallback()
 
@@ -218,6 +225,11 @@ func (b *Broker) SetRuleEngine(ruleEngine *rules.RuleEngine) {
 	b.setupRepublishCallback()
 }
 
+// GetIntegrationEngine returns the data integration engine for configuration
+func (b *Broker) GetIntegrationEngine() *integration.DataIntegrationEngine {
+	return b.integrationEngine
+}
+
 // processMessageThroughRuleEngine processes a message through the rule engine
 func (b *Broker) processMessageThroughRuleEngine(topicName string, payload []byte, qos byte, clientID string, headers map[string]string) {
 	if b.ruleEngine == nil {
@@ -242,6 +254,34 @@ func (b *Broker) processMessageThroughRuleEngine(topicName string, payload []byt
 	ctx := context.Background()
 	if err := b.ruleEngine.ProcessMessage(ctx, ruleContext); err != nil {
 		log.Printf("Rule engine processing error: %v", err)
+	}
+}
+
+// processMessageThroughIntegration processes a message through the data integration engine
+func (b *Broker) processMessageThroughIntegration(topicName string, payload []byte, qos byte, clientID string, headers map[string]string) {
+	if b.integrationEngine == nil {
+		log.Printf("[DEBUG] Integration engine is nil, skipping integration processing")
+		return
+	}
+	log.Printf("[DEBUG] Processing message through integration engine: topic=%s, payload_size=%d", topicName, len(payload))
+
+	// Create integration message
+	integrationMsg := &integration.Message{
+		ID:         fmt.Sprintf("mqtt-%d", time.Now().UnixNano()),
+		Topic:      topicName,
+		Payload:    payload,
+		QoS:        int(qos),
+		Headers:    headers,
+		Metadata:   make(map[string]interface{}),
+		Timestamp:  time.Now(),
+		SourceType: "mqtt",
+		SourceID:   clientID,
+	}
+
+	// Process message through integration engine
+	ctx := context.Background()
+	if err := b.integrationEngine.ProcessMessage(ctx, integrationMsg); err != nil {
+		log.Printf("Integration engine processing error: %v", err)
 	}
 }
 
@@ -1266,6 +1306,9 @@ func (b *Broker) RouteToLocalSubscribersWithRequestResponse(topicName string, pa
 	}
 	b.processMessageThroughRuleEngine(topicName, payload, publishQoS, "", headers)
 
+	// Process message through data integration engine
+	b.processMessageThroughIntegration(topicName, payload, publishQoS, "", headers)
+
 	subscribers := b.topics.GetSubscribers(topicName)
 	if len(subscribers) > 0 {
 		logMsg := fmt.Sprintf("Routing message on topic '%s' to %d local subscribers (with %d user properties)", topicName, len(subscribers), len(userProperties))
@@ -1649,6 +1692,13 @@ func (b *Broker) Close() error {
 	if b.ruleEngine != nil {
 		if err := b.ruleEngine.Close(); err != nil {
 			log.Printf("[ERROR] Failed to close rule engine: %v", err)
+		}
+	}
+
+	// Close data integration engine
+	if b.integrationEngine != nil {
+		if err := b.integrationEngine.Close(); err != nil {
+			log.Printf("[ERROR] Failed to close integration engine: %v", err)
 		}
 	}
 

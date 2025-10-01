@@ -32,6 +32,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/admin"
 	"github.com/turtacn/emqx-go/pkg/auth/x509"
 	"github.com/turtacn/emqx-go/pkg/connector"
+	"github.com/turtacn/emqx-go/pkg/integration"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
 	"github.com/turtacn/emqx-go/pkg/rules"
@@ -43,16 +44,17 @@ var embeddedFiles embed.FS
 
 // Server represents the dashboard web server
 type Server struct {
-	httpServer      *http.Server
-	adminAPI        *admin.APIServer
-	metricsManager  *metrics.MetricsManager
-	healthChecker   *monitor.HealthChecker
+	httpServer         *http.Server
+	adminAPI           *admin.APIServer
+	metricsManager     *metrics.MetricsManager
+	healthChecker      *monitor.HealthChecker
 	certificateManager *tlspkg.CertificateManager
-	connectorManager *connector.ConnectorManager
-	ruleEngine      *rules.RuleEngine
-	templates       *template.Template
-	mux             *http.ServeMux
-	config          *Config
+	connectorManager   *connector.ConnectorManager
+	ruleEngine         *rules.RuleEngine
+	integrationEngine  *integration.DataIntegrationEngine
+	templates          *template.Template
+	mux                *http.ServeMux
+	config             *Config
 }
 
 // Config contains dashboard server configuration
@@ -78,7 +80,7 @@ func DefaultConfig() *Config {
 }
 
 // NewServer creates a new dashboard server
-func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker, certManager *tlspkg.CertificateManager, connectorManager *connector.ConnectorManager, ruleEngine *rules.RuleEngine) (*Server, error) {
+func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker, certManager *tlspkg.CertificateManager, connectorManager *connector.ConnectorManager, ruleEngine *rules.RuleEngine, integrationEngine *integration.DataIntegrationEngine) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -92,6 +94,7 @@ func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metric
 		certificateManager: certManager,
 		connectorManager:   connectorManager,
 		ruleEngine:         ruleEngine,
+		integrationEngine:  integrationEngine,
 		mux:                mux,
 		config:             config,
 	}
@@ -156,6 +159,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/tls-config", s.authMiddleware(s.handleTLSConfig))
 	s.mux.HandleFunc("/connectors", s.authMiddleware(s.handleConnectors))
 	s.mux.HandleFunc("/rules", s.authMiddleware(s.handleRules))
+	s.mux.HandleFunc("/integration", s.authMiddleware(s.handleIntegration))
 
 	// Authentication
 	s.mux.HandleFunc("/login", s.handleLogin)
@@ -185,6 +189,12 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/rules/", s.authMiddleware(s.handleAPIRuleByID))
 	s.mux.HandleFunc("/api/action-types", s.authMiddleware(s.handleAPIActionTypes))
 	s.mux.HandleFunc("/api/action-schemas/", s.authMiddleware(s.handleAPIActionSchema))
+
+	// Data integration management API endpoints
+	s.mux.HandleFunc("/api/integration/bridges", s.authMiddleware(s.handleAPIBridges))
+	s.mux.HandleFunc("/api/integration/bridges/", s.authMiddleware(s.handleAPIBridgeByID))
+	s.mux.HandleFunc("/api/integration/connectors", s.authMiddleware(s.handleAPIIntegrationConnectors))
+	s.mux.HandleFunc("/api/integration/metrics", s.authMiddleware(s.handleAPIIntegrationMetrics))
 
 	// Proxy admin API endpoints
 	s.mux.Handle("/api/v5/", s.authMiddleware(s.proxyAdminAPI))
@@ -1378,5 +1388,202 @@ func (s *Server) getRulesData() map[string]interface{} {
 		"Title": "Rules - EMQX Go",
 		"Rules": rulesList,
 		"Count": len(rulesList),
+	}
+}
+
+// Data Integration Management Handlers
+
+// handleIntegration serves the data integration management page
+func (s *Server) handleIntegration(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	data := s.getIntegrationData()
+	s.renderTemplate(w, "integration.html", data)
+}
+
+// handleAPIBridges handles bridge CRUD operations
+func (s *Server) handleAPIBridges(w http.ResponseWriter, r *http.Request) {
+	if s.integrationEngine == nil {
+		http.Error(w, "Integration engine not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// List all bridges
+		bridges := s.integrationEngine.ListBridges()
+		s.writeJSON(w, bridges)
+
+	case http.MethodPost:
+		// Create new bridge
+		var bridge integration.Bridge
+		if err := json.NewDecoder(r.Body).Decode(&bridge); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.integrationEngine.CreateBridge(bridge); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Bridge created successfully",
+			"id":      bridge.ID,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIBridgeByID handles operations on specific bridges
+func (s *Server) handleAPIBridgeByID(w http.ResponseWriter, r *http.Request) {
+	if s.integrationEngine == nil {
+		http.Error(w, "Integration engine not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract bridge ID from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/integration/bridges/")
+	parts := strings.Split(path, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "Bridge ID required", http.StatusBadRequest)
+		return
+	}
+
+	bridgeID := parts[0]
+
+	// Handle enable/disable actions
+	if len(parts) > 1 {
+		action := parts[1]
+		switch action {
+		case "enable":
+			if err := s.integrationEngine.EnableBridge(bridgeID); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			s.writeJSON(w, map[string]interface{}{
+				"message": "Bridge enabled successfully",
+			})
+		case "disable":
+			if err := s.integrationEngine.DisableBridge(bridgeID); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			s.writeJSON(w, map[string]interface{}{
+				"message": "Bridge disabled successfully",
+			})
+		default:
+			http.Error(w, "Invalid action", http.StatusBadRequest)
+		}
+		return
+	}
+
+	// Handle CRUD operations
+	switch r.Method {
+	case http.MethodGet:
+		// Get specific bridge
+		bridge, err := s.integrationEngine.GetBridge(bridgeID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, bridge)
+
+	case http.MethodPut:
+		// Update bridge
+		var bridge integration.Bridge
+		if err := json.NewDecoder(r.Body).Decode(&bridge); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.integrationEngine.UpdateBridge(bridgeID, bridge); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Bridge updated successfully",
+		})
+
+	case http.MethodDelete:
+		// Delete bridge
+		if err := s.integrationEngine.DeleteBridge(bridgeID); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Bridge deleted successfully",
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIIntegrationConnectors returns integration connectors
+func (s *Server) handleAPIIntegrationConnectors(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.integrationEngine == nil {
+		http.Error(w, "Integration engine not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	connectors := s.integrationEngine.ListConnectors()
+	connectorsData := make([]map[string]interface{}, 0)
+
+	for _, connector := range connectors {
+		metrics := connector.GetMetrics()
+		connectorsData = append(connectorsData, map[string]interface{}{
+			"id":        connector.ID(),
+			"type":      connector.Type(),
+			"connected": connector.IsConnected(),
+			"metrics":   metrics,
+		})
+	}
+
+	s.writeJSON(w, connectorsData)
+}
+
+// handleAPIIntegrationMetrics returns integration metrics
+func (s *Server) handleAPIIntegrationMetrics(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.integrationEngine == nil {
+		http.Error(w, "Integration engine not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	metrics := s.integrationEngine.GetMetrics()
+	s.writeJSON(w, metrics)
+}
+
+// getIntegrationData prepares data for integration page
+func (s *Server) getIntegrationData() map[string]interface{} {
+	var bridges []integration.Bridge
+	var metrics *integration.IntegrationMetrics
+
+	if s.integrationEngine != nil {
+		bridges = s.integrationEngine.ListBridges()
+		metrics = s.integrationEngine.GetMetrics()
+	}
+
+	return map[string]interface{}{
+		"Title":   "Data Integration - EMQX Go",
+		"Bridges": bridges,
+		"Count":   len(bridges),
+		"Metrics": metrics,
 	}
 }

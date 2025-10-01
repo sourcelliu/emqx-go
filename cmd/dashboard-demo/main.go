@@ -15,6 +15,7 @@ import (
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/dashboard"
+	"github.com/turtacn/emqx-go/pkg/integration"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
 	"github.com/turtacn/emqx-go/pkg/rules"
@@ -48,6 +49,9 @@ func main() {
 	// Get the rule engine from the broker (they share the same instance)
 	ruleEngine := brokerInstance.GetRuleEngine()
 
+	// Create integration engine
+	integrationEngine := integration.NewDataIntegrationEngine()
+
 	// Set up republish callback for rule engine
 	republishExecutor, err := ruleEngine.GetActionExecutor(rules.ActionTypeRepublish)
 	if err == nil {
@@ -67,7 +71,7 @@ func main() {
 	config := dashboard.DefaultConfig()
 	config.Address = "127.0.0.1"  // Bind to localhost for security
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, brokerInstance.GetCertificateManager(), connectorManager, ruleEngine)
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, brokerInstance.GetCertificateManager(), connectorManager, ruleEngine, integrationEngine)
 	if err != nil {
 		log.Fatalf("Failed to create dashboard server: %v", err)
 	}

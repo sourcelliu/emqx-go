@@ -32,8 +32,10 @@ import (
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/dashboard"
+	"github.com/turtacn/emqx-go/pkg/integration"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
+	"github.com/turtacn/emqx-go/pkg/rules"
 )
 
 const (
@@ -142,7 +144,13 @@ func TestDashboardBasicFunctionality(t *testing.T) {
 	// Create connector manager for dashboard
 	connectorManager := connector.CreateDefaultConnectorManager()
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
+	// Create integration engine for dashboard
+	integrationEngine := integration.NewDataIntegrationEngine()
+
+	// Create rule engine for dashboard
+	ruleEngine := rules.NewRuleEngine()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -195,7 +203,13 @@ func TestDashboardAPIEndpoints(t *testing.T) {
 	// Create connector manager for dashboard
 	connectorManager := connector.CreateDefaultConnectorManager()
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
+	// Create integration engine for dashboard
+	integrationEngine := integration.NewDataIntegrationEngine()
+
+	// Create rule engine for dashboard
+	ruleEngine := rules.NewRuleEngine()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -279,7 +293,13 @@ func TestDashboardWithRealMQTTTraffic(t *testing.T) {
 	// Create connector manager for dashboard
 	connectorManager := connector.CreateDefaultConnectorManager()
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
+	// Create integration engine for dashboard
+	integrationEngine := integration.NewDataIntegrationEngine()
+
+	// Create rule engine for dashboard
+	ruleEngine := rules.NewRuleEngine()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -378,7 +398,13 @@ func TestDashboardAuthentication(t *testing.T) {
 	// Create connector manager for dashboard
 	connectorManager := connector.CreateDefaultConnectorManager()
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
+	// Create integration engine for dashboard
+	integrationEngine := integration.NewDataIntegrationEngine()
+
+	// Create rule engine for dashboard
+	ruleEngine := rules.NewRuleEngine()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -458,7 +484,13 @@ func TestDashboardPageNavigation(t *testing.T) {
 	// Create connector manager for dashboard
 	connectorManager := connector.CreateDefaultConnectorManager()
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
+	// Create integration engine for dashboard
+	integrationEngine := integration.NewDataIntegrationEngine()
+
+	// Create rule engine for dashboard
+	ruleEngine := rules.NewRuleEngine()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -520,7 +552,13 @@ func TestDashboardStaticFiles(t *testing.T) {
 	// Create connector manager for dashboard
 	connectorManager := connector.CreateDefaultConnectorManager()
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
+	// Create integration engine for dashboard
+	integrationEngine := integration.NewDataIntegrationEngine()
+
+	// Create rule engine for dashboard
+	ruleEngine := rules.NewRuleEngine()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager, ruleEngine, integrationEngine)
 	require.NoError(t, err)
 
 	// Start dashboard server
