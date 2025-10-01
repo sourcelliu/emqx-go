@@ -30,6 +30,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/turtacn/emqx-go/pkg/admin"
 	"github.com/turtacn/emqx-go/pkg/broker"
+	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/dashboard"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
@@ -138,7 +139,10 @@ func TestDashboardBasicFunctionality(t *testing.T) {
 		EnableAuth: false, // Disable for testing
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
+	// Create connector manager for dashboard
+	connectorManager := connector.CreateDefaultConnectorManager()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -188,7 +192,10 @@ func TestDashboardAPIEndpoints(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
+	// Create connector manager for dashboard
+	connectorManager := connector.CreateDefaultConnectorManager()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -269,7 +276,10 @@ func TestDashboardWithRealMQTTTraffic(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
+	// Create connector manager for dashboard
+	connectorManager := connector.CreateDefaultConnectorManager()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -365,7 +375,10 @@ func TestDashboardAuthentication(t *testing.T) {
 		EnableAuth: true, // Enable auth for this test
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
+	// Create connector manager for dashboard
+	connectorManager := connector.CreateDefaultConnectorManager()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -442,7 +455,10 @@ func TestDashboardPageNavigation(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
+	// Create connector manager for dashboard
+	connectorManager := connector.CreateDefaultConnectorManager()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
 	require.NoError(t, err)
 
 	// Start dashboard server
@@ -501,7 +517,10 @@ func TestDashboardStaticFiles(t *testing.T) {
 		EnableAuth: false,
 	}
 
-	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil)
+	// Create connector manager for dashboard
+	connectorManager := connector.CreateDefaultConnectorManager()
+
+	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, nil, connectorManager)
 	require.NoError(t, err)
 
 	// Start dashboard server

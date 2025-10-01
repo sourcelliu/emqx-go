@@ -31,6 +31,7 @@ import (
 
 	"github.com/turtacn/emqx-go/pkg/admin"
 	"github.com/turtacn/emqx-go/pkg/auth/x509"
+	"github.com/turtacn/emqx-go/pkg/connector"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
 	tlspkg "github.com/turtacn/emqx-go/pkg/tls"
@@ -46,6 +47,7 @@ type Server struct {
 	metricsManager  *metrics.MetricsManager
 	healthChecker   *monitor.HealthChecker
 	certificateManager *tlspkg.CertificateManager
+	connectorManager *connector.ConnectorManager
 	templates       *template.Template
 	mux             *http.ServeMux
 	config          *Config
@@ -74,7 +76,7 @@ func DefaultConfig() *Config {
 }
 
 // NewServer creates a new dashboard server
-func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker, certManager *tlspkg.CertificateManager) (*Server, error) {
+func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metrics.MetricsManager, healthChecker *monitor.HealthChecker, certManager *tlspkg.CertificateManager, connectorManager *connector.ConnectorManager) (*Server, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -86,6 +88,7 @@ func NewServer(config *Config, adminAPI *admin.APIServer, metricsManager *metric
 		metricsManager:     metricsManager,
 		healthChecker:      healthChecker,
 		certificateManager: certManager,
+		connectorManager:   connectorManager,
 		mux:                mux,
 		config:             config,
 	}
@@ -148,6 +151,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/monitoring", s.authMiddleware(s.handleMonitoring))
 	s.mux.HandleFunc("/certificates", s.authMiddleware(s.handleCertificates))
 	s.mux.HandleFunc("/tls-config", s.authMiddleware(s.handleTLSConfig))
+	s.mux.HandleFunc("/connectors", s.authMiddleware(s.handleConnectors))
 
 	// Authentication
 	s.mux.HandleFunc("/login", s.handleLogin)
@@ -166,6 +170,11 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/tls-config", s.authMiddleware(s.handleAPITLSConfig))
 	s.mux.HandleFunc("/api/tls-config/", s.authMiddleware(s.handleAPITLSConfigByID))
 	s.mux.HandleFunc("/api/x509-auth", s.authMiddleware(s.handleAPIX509Auth))
+
+	// Connector management API endpoints
+	s.mux.HandleFunc("/api/connectors", s.authMiddleware(s.handleAPIConnectors))
+	s.mux.HandleFunc("/api/connectors/", s.authMiddleware(s.handleAPIConnectorByID))
+	s.mux.HandleFunc("/api/connector-types", s.authMiddleware(s.handleAPIConnectorTypes))
 
 	// Proxy admin API endpoints
 	s.mux.Handle("/api/v5/", s.authMiddleware(s.proxyAdminAPI))
@@ -334,6 +343,17 @@ func (s *Server) handleMonitoring(w http.ResponseWriter, r *http.Request) {
 
 	data := s.getMonitoringData()
 	s.renderTemplate(w, "monitoring.html", data)
+}
+
+// handleConnectors serves the connector management page
+func (s *Server) handleConnectors(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	data := s.getConnectorsData()
+	s.renderTemplate(w, "connectors.html", data)
 }
 
 // handleCertificates serves the certificate management page
@@ -815,6 +835,283 @@ func (s *Server) handleAPIX509Auth(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Connector management API handlers
+
+// handleAPIConnectors handles connector CRUD operations
+func (s *Server) handleAPIConnectors(w http.ResponseWriter, r *http.Request) {
+	if s.connectorManager == nil {
+		http.Error(w, "Connector manager not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// List all connectors
+		connectors := s.connectorManager.ListConnectors()
+		connectorsData := make([]map[string]interface{}, 0)
+
+		for id, conn := range connectors {
+			config := conn.GetConfig()
+			status := conn.Status()
+			metrics := conn.GetMetrics()
+
+			connectorsData = append(connectorsData, map[string]interface{}{
+				"id":          id,
+				"name":        config.Name,
+				"type":        string(config.Type),
+				"enabled":     config.Enabled,
+				"state":       string(status.State),
+				"created_at":  config.CreatedAt.Format(time.RFC3339),
+				"updated_at":  config.UpdatedAt.Format(time.RFC3339),
+				"description": config.Description,
+				"metrics": map[string]interface{}{
+					"messages_sent":     metrics.MessagesSent,
+					"messages_received": metrics.MessagesReceived,
+					"messages_dropped":  metrics.MessagesDropped,
+					"error_count":       metrics.ErrorCount,
+					"success_count":     metrics.SuccessCount,
+				},
+				"health_status": map[string]interface{}{
+					"healthy":         status.HealthStatus.Healthy,
+					"last_check_time": status.HealthStatus.LastCheckTime.Format(time.RFC3339),
+					"message":         status.HealthStatus.Message,
+				},
+			})
+		}
+
+		data := map[string]interface{}{
+			"connectors": connectorsData,
+			"count":      len(connectorsData),
+		}
+		s.writeJSON(w, data)
+
+	case http.MethodPost:
+		// Create new connector
+		var config connector.ConnectorConfig
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.connectorManager.CreateConnector(config); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Connector created successfully",
+			"id":      config.ID,
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIConnectorByID handles operations on specific connectors
+func (s *Server) handleAPIConnectorByID(w http.ResponseWriter, r *http.Request) {
+	if s.connectorManager == nil {
+		http.Error(w, "Connector manager not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Extract connector ID from URL path
+	path := strings.TrimPrefix(r.URL.Path, "/api/connectors/")
+	if path == "" {
+		http.Error(w, "Connector ID required", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// Get specific connector
+		info, err := s.connectorManager.GetConnectorInfo(path)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, info)
+
+	case http.MethodPut:
+		// Update connector configuration
+		var config connector.ConnectorConfig
+		if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+			http.Error(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		if err := s.connectorManager.UpdateConnector(path, config); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Connector updated successfully",
+		})
+
+	case http.MethodDelete:
+		// Delete connector
+		if err := s.connectorManager.DeleteConnector(path); err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		s.writeJSON(w, map[string]interface{}{
+			"message": "Connector deleted successfully",
+		})
+
+	case http.MethodPost:
+		// Handle connector actions (start/stop/restart)
+		action := r.URL.Query().Get("action")
+		var err error
+
+		switch action {
+		case "start":
+			err = s.connectorManager.StartConnector(path)
+		case "stop":
+			err = s.connectorManager.StopConnector(path)
+		case "restart":
+			err = s.connectorManager.RestartConnector(path)
+		default:
+			http.Error(w, "Invalid action", http.StatusBadRequest)
+			return
+		}
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		s.writeJSON(w, map[string]interface{}{
+			"message": fmt.Sprintf("Connector %s %sed successfully", path, action),
+		})
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleAPIConnectorTypes returns available connector types
+func (s *Server) handleAPIConnectorTypes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.connectorManager == nil {
+		http.Error(w, "Connector manager not available", http.StatusServiceUnavailable)
+		return
+	}
+
+	types := s.connectorManager.GetConnectorTypes()
+	typesData := make([]map[string]interface{}, 0)
+
+	for _, connType := range types {
+		schema, err := s.connectorManager.GetConnectorSchema(connType)
+		if err != nil {
+			continue
+		}
+
+		typesData = append(typesData, map[string]interface{}{
+			"type":        string(connType),
+			"name":        strings.Title(string(connType)),
+			"description": getConnectorTypeDescription(connType),
+			"schema":      schema,
+		})
+	}
+
+	data := map[string]interface{}{
+		"types": typesData,
+		"count": len(typesData),
+	}
+
+	s.writeJSON(w, data)
+}
+
+// getConnectorTypeDescription returns a description for each connector type
+func getConnectorTypeDescription(connType connector.ConnectorType) string {
+	switch connType {
+	case connector.ConnectorTypeHTTP:
+		return "HTTP/HTTPS webhook connector for sending messages to external HTTP endpoints"
+	case connector.ConnectorTypeMySQL:
+		return "MySQL database connector for storing messages in MySQL database"
+	case connector.ConnectorTypePostgreSQL:
+		return "PostgreSQL database connector for storing messages in PostgreSQL database"
+	case connector.ConnectorTypeRedis:
+		return "Redis connector for publishing messages to Redis or storing in Redis data structures"
+	case connector.ConnectorTypeKafka:
+		return "Apache Kafka connector for publishing messages to Kafka topics"
+	default:
+		return "External system connector"
+	}
+}
+
+// Helper methods for connector management
+
+// getConnectorsData prepares data for connectors page
+func (s *Server) getConnectorsData() map[string]interface{} {
+	var connectors []map[string]interface{}
+	var count int
+
+	if s.connectorManager != nil {
+		connectorMap := s.connectorManager.ListConnectors()
+		connectors = make([]map[string]interface{}, 0, len(connectorMap))
+
+		for id, conn := range connectorMap {
+			config := conn.GetConfig()
+			status := conn.Status()
+
+			connectors = append(connectors, map[string]interface{}{
+				"id":          id,
+				"name":        config.Name,
+				"type":        string(config.Type),
+				"enabled":     config.Enabled,
+				"state":       string(status.State),
+				"created_at":  config.CreatedAt.Format("2006-01-02 15:04:05"),
+				"description": config.Description,
+			})
+		}
+		count = len(connectors)
+	}
+
+	return map[string]interface{}{
+		"Title":      "Connectors - EMQX Go",
+		"Connectors": connectors,
+		"Count":      count,
+		"Types":      getAvailableConnectorTypes(),
+	}
+}
+
+// getAvailableConnectorTypes returns available connector types for the UI
+func getAvailableConnectorTypes() []map[string]interface{} {
+	return []map[string]interface{}{
+		{
+			"value":       "http",
+			"label":       "HTTP",
+			"description": "HTTP/HTTPS webhook connector",
+		},
+		{
+			"value":       "mysql",
+			"label":       "MySQL",
+			"description": "MySQL database connector",
+		},
+		{
+			"value":       "postgresql",
+			"label":       "PostgreSQL",
+			"description": "PostgreSQL database connector",
+		},
+		{
+			"value":       "redis",
+			"label":       "Redis",
+			"description": "Redis connector",
+		},
+		{
+			"value":       "kafka",
+			"label":       "Kafka",
+			"description": "Apache Kafka connector",
+		},
 	}
 }
 
