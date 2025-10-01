@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}}</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX Go Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard">Dashboard</a>
+                    <a href="/connections">Connections</a>
+                    <a href="/sessions">Sessions</a>
+                    <a href="/subscriptions">Subscriptions</a>
+                    <a href="/certificates">Certificates</a>
+                    <a href="/tls-config">TLS Config</a>
+                    <a href="/connectors">Connectors</a>
+                    <a href="/rules" class="active">Rules</a>
+                    <a href="/monitoring">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, admin</span>
+                    <a href="/logout" class="btn btn-small">Logout</a>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">Rule Engine Management</h1>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <button id="create-rule-btn" class="btn btn-primary">Create Rule</button>
+                    <button id="refresh-btn" class="btn btn-secondary btn-small">Refresh</button>
+                    <span style="font-size: 0.9rem; color: #666;">Total: <span id="rule-count">{{.Count}}</span> rules</span>
+                </div>
+            </div>
+
+            <!-- Rules Table -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Rules</h2>
+                </div>
+                <div class="card-content">
+                    <div class="table-container">
+                        <table class="table" id="rules-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Name</th>
+                                    <th>Status</th>
+                                    <th>SQL</th>
+                                    <th>Actions</th>
+                                    <th>Metrics</th>
+                                    <th>Last Execution</th>
+                                    <th>Operations</th>
+                                </tr>
+                            </thead>
+                            <tbody id="rules-table-body">
+                                {{range .Rules}}
+                                <tr>
+                                    <td>{{.ID}}</td>
+                                    <td>{{.Name}}</td>
+                                    <td>
+                                        <span class="status-badge status-{{.Status}}">{{.Status}}</span>
+                                    </td>
+                                    <td class="sql-cell" title="{{.SQL}}">{{.SQL}}</td>
+                                    <td>{{len .Actions}}</td>
+                                    <td>
+                                        <div class="metrics-summary">
+                                            <div>Matched: {{.Metrics.MatchedCount}}</div>
+                                            <div>Executed: {{.Metrics.ExecutedCount}}</div>
+                                            <div>Failed: {{.Metrics.FailedCount}}</div>
+                                        </div>
+                                    </td>
+                                    <td>
+                                        {{if .Metrics.LastExecution}}
+                                            {{.Metrics.LastExecution.Format "2006-01-02 15:04:05"}}
+                                        {{else}}
+                                            Never
+                                        {{end}}
+                                    </td>
+                                    <td>
+                                        <div class="action-buttons">
+                                            {{if eq .Status "enabled"}}
+                                                <button class="btn btn-small btn-warning" onclick="toggleRule('{{.ID}}', 'disable')">Disable</button>
+                                            {{else}}
+                                                <button class="btn btn-small btn-success" onclick="toggleRule('{{.ID}}', 'enable')">Enable</button>
+                                            {{end}}
+                                            <button class="btn btn-small btn-secondary" onclick="editRule('{{.ID}}')">Edit</button>
+                                            <button class="btn btn-small btn-danger" onclick="deleteRule('{{.ID}}')">Delete</button>
+                                        </div>
+                                    </td>
+                                </tr>
+                                {{end}}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Create/Edit Rule Modal -->
+    <div id="rule-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Create Rule</h3>
+                <span class="close" onclick="closeRuleModal()">&times;</span>
+            </div>
+            <form id="rule-form">
+                <div class="form-group">
+                    <label for="rule-id">Rule ID:</label>
+                    <input type="text" id="rule-id" name="id" required>
+                </div>
+                <div class="form-group">
+                    <label for="rule-name">Rule Name:</label>
+                    <input type="text" id="rule-name" name="name" required>
+                </div>
+                <div class="form-group">
+                    <label for="rule-description">Description:</label>
+                    <textarea id="rule-description" name="description" rows="3"></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="rule-sql">SQL WHERE Clause:</label>
+                    <textarea id="rule-sql" name="sql" rows="4" placeholder="SELECT * FROM t WHERE topic = 'sensor/+/temperature'" required></textarea>
+                    <small class="form-help">Example: SELECT * FROM t WHERE topic LIKE 'sensor/%' AND payload.temperature > 25</small>
+                </div>
+                <div class="form-group">
+                    <label for="rule-priority">Priority:</label>
+                    <input type="number" id="rule-priority" name="priority" value="0" min="0">
+                </div>
+                <div class="form-group">
+                    <label>Actions:</label>
+                    <div id="actions-container">
+                        <!-- Actions will be dynamically added here -->
+                    </div>
+                    <button type="button" class="btn btn-small btn-secondary" onclick="addAction()">Add Action</button>
+                </div>
+                <div class="form-group">
+                    <label for="rule-status">Status:</label>
+                    <select id="rule-status" name="status">
+                        <option value="enabled">Enabled</option>
+                        <option value="disabled">Disabled</option>
+                    </select>
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">Save Rule</button>
+                    <button type="button" class="btn btn-secondary" onclick="closeRuleModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let actionTypes = [];
+        let actionSchemas = {};
+        let editingRuleId = null;
+
+        // Load action types and schemas
+        async function loadActionTypes() {
+            try {
+                const response = await fetch('/api/action-types');
+                actionTypes = await response.json();
+
+                // Load schemas for each action type
+                for (const actionType of actionTypes) {
+                    const schemaResponse = await fetch(`/api/action-schemas/${actionType}`);
+                    actionSchemas[actionType] = await schemaResponse.json();
+                }
+            } catch (error) {
+                console.error('Error loading action types:', error);
+            }
+        }
+
+        // Initialize page
+        document.addEventListener('DOMContentLoaded', function() {
+            loadActionTypes();
+            loadRules();
+        });
+
+        // Load rules from API
+        async function loadRules() {
+            try {
+                const response = await fetch('/api/rules');
+                const rules = await response.json();
+                updateRulesTable(rules);
+                document.getElementById('rule-count').textContent = rules.length;
+            } catch (error) {
+                console.error('Error loading rules:', error);
+                alert('Error loading rules: ' + error.message);
+            }
+        }
+
+        // Update rules table
+        function updateRulesTable(rules) {
+            const tbody = document.getElementById('rules-table-body');
+            tbody.innerHTML = '';
+
+            rules.forEach(rule => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${rule.id}</td>
+                    <td>${rule.name}</td>
+                    <td><span class="status-badge status-${rule.status}">${rule.status}</span></td>
+                    <td class="sql-cell" title="${rule.sql}">${rule.sql}</td>
+                    <td>${rule.actions ? rule.actions.length : 0}</td>
+                    <td>
+                        <div class="metrics-summary">
+                            <div>Matched: ${rule.metrics.matched_count || 0}</div>
+                            <div>Executed: ${rule.metrics.executed_count || 0}</div>
+                            <div>Failed: ${rule.metrics.failed_count || 0}</div>
+                        </div>
+                    </td>
+                    <td>${rule.metrics.last_execution ? new Date(rule.metrics.last_execution).toLocaleString() : 'Never'}</td>
+                    <td>
+                        <div class="action-buttons">
+                            ${rule.status === 'enabled' ?
+                                '<button class="btn btn-small btn-warning" onclick="toggleRule(\'' + rule.id + '\', \'disable\')">Disable</button>' :
+                                '<button class="btn btn-small btn-success" onclick="toggleRule(\'' + rule.id + '\', \'enable\')">Enable</button>'
+                            }
+                            <button class="btn btn-small btn-secondary" onclick="editRule('${rule.id}')">Edit</button>
+                            <button class="btn btn-small btn-danger" onclick="deleteRule('${rule.id}')">Delete</button>
+                        </div>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        // Show create rule modal
+        document.getElementById('create-rule-btn').addEventListener('click', function() {
+            editingRuleId = null;
+            document.getElementById('modal-title').textContent = 'Create Rule';
+            document.getElementById('rule-form').reset();
+            document.getElementById('actions-container').innerHTML = '';
+            addAction(); // Add one action by default
+            document.getElementById('rule-modal').style.display = 'block';
+        });
+
+        // Close modal
+        function closeRuleModal() {
+            document.getElementById('rule-modal').style.display = 'none';
+        }
+
+        // Add action to form
+        function addAction() {
+            const container = document.getElementById('actions-container');
+            const actionDiv = document.createElement('div');
+            actionDiv.className = 'action-item';
+
+            const actionTypeSelect = document.createElement('select');
+            actionTypeSelect.name = 'action-type';
+            actionTypeSelect.innerHTML = '<option value="">Select Action Type</option>';
+            actionTypes.forEach(type => {
+                actionTypeSelect.innerHTML += `<option value="${type}">${type}</option>`;
+            });
+
+            actionDiv.innerHTML = `
+                <div class="action-header">
+                    <label>Action Type:</label>
+                    <button type="button" class="btn btn-small btn-danger" onclick="removeAction(this)">Remove</button>
+                </div>
+                <div class="action-parameters">
+                    <div class="parameters-container"></div>
+                </div>
+            `;
+
+            actionDiv.querySelector('.action-header').insertBefore(actionTypeSelect, actionDiv.querySelector('.btn'));
+
+            actionTypeSelect.addEventListener('change', function() {
+                updateActionParameters(this);
+            });
+
+            container.appendChild(actionDiv);
+        }
+
+        // Remove action from form
+        function removeAction(button) {
+            button.closest('.action-item').remove();
+        }
+
+        // Update action parameters based on selected type
+        function updateActionParameters(select) {
+            const actionType = select.value;
+            const parametersContainer = select.closest('.action-item').querySelector('.parameters-container');
+            parametersContainer.innerHTML = '';
+
+            if (actionType && actionSchemas[actionType]) {
+                const schema = actionSchemas[actionType];
+                if (schema.properties) {
+                    Object.entries(schema.properties).forEach(([key, prop]) => {
+                        const div = document.createElement('div');
+                        div.className = 'form-group';
+                        div.innerHTML = `
+                            <label>${key}:</label>
+                            <input type="text" name="param-${key}" placeholder="${prop.description || ''}" ${schema.required && schema.required.includes(key) ? 'required' : ''}>
+                            ${prop.description ? `<small class="form-help">${prop.description}</small>` : ''}
+                        `;
+                        parametersContainer.appendChild(div);
+                    });
+                }
+            }
+        }
+
+        // Submit rule form
+        document.getElementById('rule-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+
+            const formData = new FormData(e.target);
+            const rule = {
+                id: formData.get('id'),
+                name: formData.get('name'),
+                description: formData.get('description'),
+                sql: formData.get('sql'),
+                priority: parseInt(formData.get('priority')),
+                status: formData.get('status'),
+                actions: []
+            };
+
+            // Collect actions
+            const actionItems = document.querySelectorAll('.action-item');
+            actionItems.forEach(item => {
+                const actionType = item.querySelector('[name="action-type"]').value;
+                if (actionType) {
+                    const action = {
+                        type: actionType,
+                        parameters: {}
+                    };
+
+                    item.querySelectorAll('[name^="param-"]').forEach(input => {
+                        const paramName = input.name.replace('param-', '');
+                        if (input.value) {
+                            action.parameters[paramName] = input.value;
+                        }
+                    });
+
+                    rule.actions.push(action);
+                }
+            });
+
+            try {
+                const method = editingRuleId ? 'PUT' : 'POST';
+                const url = editingRuleId ? `/api/rules/${editingRuleId}` : '/api/rules';
+
+                const response = await fetch(url, {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(rule)
+                });
+
+                if (response.ok) {
+                    closeRuleModal();
+                    loadRules();
+                    alert('Rule saved successfully!');
+                } else {
+                    const error = await response.text();
+                    alert('Error saving rule: ' + error);
+                }
+            } catch (error) {
+                console.error('Error saving rule:', error);
+                alert('Error saving rule: ' + error.message);
+            }
+        });
+
+        // Edit rule
+        async function editRule(ruleId) {
+            try {
+                const response = await fetch(`/api/rules/${ruleId}`);
+                const rule = await response.json();
+
+                editingRuleId = ruleId;
+                document.getElementById('modal-title').textContent = 'Edit Rule';
+
+                // Populate form
+                document.getElementById('rule-id').value = rule.id;
+                document.getElementById('rule-name').value = rule.name;
+                document.getElementById('rule-description').value = rule.description || '';
+                document.getElementById('rule-sql').value = rule.sql;
+                document.getElementById('rule-priority').value = rule.priority;
+                document.getElementById('rule-status').value = rule.status;
+
+                // Populate actions
+                const actionsContainer = document.getElementById('actions-container');
+                actionsContainer.innerHTML = '';
+
+                if (rule.actions && rule.actions.length > 0) {
+                    rule.actions.forEach(action => {
+                        addAction();
+                        const actionItems = document.querySelectorAll('.action-item');
+                        const lastActionItem = actionItems[actionItems.length - 1];
+
+                        const typeSelect = lastActionItem.querySelector('[name="action-type"]');
+                        typeSelect.value = action.type;
+                        updateActionParameters(typeSelect);
+
+                        // Set parameter values
+                        setTimeout(() => {
+                            Object.entries(action.parameters || {}).forEach(([key, value]) => {
+                                const input = lastActionItem.querySelector(`[name="param-${key}"]`);
+                                if (input) {
+                                    input.value = value;
+                                }
+                            });
+                        }, 100);
+                    });
+                } else {
+                    addAction();
+                }
+
+                document.getElementById('rule-modal').style.display = 'block';
+            } catch (error) {
+                console.error('Error loading rule:', error);
+                alert('Error loading rule: ' + error.message);
+            }
+        }
+
+        // Toggle rule status
+        async function toggleRule(ruleId, action) {
+            try {
+                const response = await fetch(`/api/rules/${ruleId}/${action}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    loadRules();
+                } else {
+                    const error = await response.text();
+                    alert(`Error ${action}ing rule: ${error}`);
+                }
+            } catch (error) {
+                console.error(`Error ${action}ing rule:`, error);
+                alert(`Error ${action}ing rule: ${error.message}`);
+            }
+        }
+
+        // Delete rule
+        async function deleteRule(ruleId) {
+            if (confirm('Are you sure you want to delete this rule?')) {
+                try {
+                    const response = await fetch(`/api/rules/${ruleId}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (response.ok) {
+                        loadRules();
+                        alert('Rule deleted successfully!');
+                    } else {
+                        const error = await response.text();
+                        alert('Error deleting rule: ' + error);
+                    }
+                } catch (error) {
+                    console.error('Error deleting rule:', error);
+                    alert('Error deleting rule: ' + error.message);
+                }
+            }
+        }
+
+        // Refresh rules
+        document.getElementById('refresh-btn').addEventListener('click', loadRules);
+
+        // Close modal when clicking outside
+        window.addEventListener('click', function(event) {
+            const modal = document.getElementById('rule-modal');
+            if (event.target === modal) {
+                closeRuleModal();
+            }
+        });
+    </script>
+</body>
+</html>
