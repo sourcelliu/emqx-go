@@ -509,12 +509,11 @@ func (b *Broker) handleTLSConnection(ctx context.Context, conn net.Conn) {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	var connLoopErr error
+	var receivedDisconnectPacket bool // Track if we received a proper DISCONNECT packet
 	for {
 		log.Printf("[DEBUG] About to read packet from TLS %s (clientID: %s)", conn.RemoteAddr(), clientID)
 		pk, err := readPacket(reader)
 		if err != nil {
-			connLoopErr = err
 			log.Printf("[DEBUG] Error reading packet from TLS %s (clientID: %s): %v", conn.RemoteAddr(), clientID, err)
 			if err != io.EOF {
 				log.Printf("Error reading packet from TLS %s (client: %s): %v", conn.RemoteAddr(), clientID, err)
@@ -717,7 +716,6 @@ func (b *Broker) handleTLSConnection(ctx context.Context, conn net.Conn) {
 		}
 
 		if err != nil {
-			connLoopErr = err
 			log.Printf("Error handling packet for TLS %s: %v", clientID, err)
 			return
 		}
@@ -726,7 +724,9 @@ tls_end_loop:
 
 	// Cleanup logic (same as regular connections)
 	if clientID != "" {
-		isGracefulDisconnect := connLoopErr == nil || connLoopErr == io.EOF
+		// Only consider it graceful if we received a proper DISCONNECT packet
+		// EOF and other errors indicate unexpected disconnection
+		isGracefulDisconnect := receivedDisconnectPacket
 
 		if disconnectErr := b.persistentSessionMgr.DisconnectSession(clientID, isGracefulDisconnect); disconnectErr != nil {
 			log.Printf("[ERROR] Failed to handle disconnect for TLS %s: %v", clientID, disconnectErr)
@@ -756,12 +756,11 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	connCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	var connLoopErr error
+	var receivedDisconnectPacket bool // Track if we received a proper DISCONNECT packet
 	for {
 		log.Printf("[DEBUG] About to read packet from %s (clientID: %s)", conn.RemoteAddr(), clientID)
 		pk, err := readPacket(reader)
 		if err != nil {
-			connLoopErr = err
 			log.Printf("[DEBUG] Error reading packet from %s (clientID: %s): %v", conn.RemoteAddr(), clientID, err)
 			if err != io.EOF {
 				// Enhanced error handling for protocol violations
@@ -1710,6 +1709,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 		case packets.Disconnect:
 			log.Printf("Client %s sent DISCONNECT.", clientID)
+			receivedDisconnectPacket = true // Mark that we received a proper DISCONNECT packet
 			// Handle graceful disconnect for persistent sessions
 			if err := b.persistentSessionMgr.DisconnectSession(clientID, true); err != nil {
 				log.Printf("[ERROR] Failed to handle graceful disconnect for %s: %v", clientID, err)
@@ -1720,26 +1720,31 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			b.mu.Lock()
 			delete(b.topicAliasManagers, clientID)
 			b.mu.Unlock()
-			// A clean disconnect means we should break the loop and proceed
-			// to the cleanup code below.
-			goto end_loop
+			log.Printf("[DEBUG] Topic alias manager removed for client %s", clientID)
+
+			// Unregister from actor system
+			b.unregisterSession(clientID)
+			log.Printf("Client %s disconnected (graceful: %t).", clientID, true)
+
+			// Close the connection immediately after graceful disconnect
+			conn.Close()
+			return
 
 		default:
 			log.Printf("Received unhandled packet type: %v", pk.FixedHeader.Type)
 		}
 
 		if err != nil {
-			connLoopErr = err
 			log.Printf("Error handling packet for %s: %v", clientID, err)
 			return
 		}
 	}
-end_loop:
 
 	if clientID != "" {
 		// Check if this was an unexpected disconnection (not graceful)
-		// If there was an error in the loop, this might trigger will message
-		isGracefulDisconnect := connLoopErr == nil || connLoopErr == io.EOF
+		// Only consider it graceful if we received a proper DISCONNECT packet
+		// EOF and other errors indicate unexpected disconnection
+		isGracefulDisconnect := receivedDisconnectPacket
 
 		// Handle disconnection for persistent sessions
 		if disconnectErr := b.persistentSessionMgr.DisconnectSession(clientID, isGracefulDisconnect); disconnectErr != nil {
