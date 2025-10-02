@@ -785,6 +785,21 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 		log.Printf("[DEBUG] Received packet type: %d from %s (clientID: %s)", pk.FixedHeader.Type, conn.RemoteAddr(), clientID)
 
+		// CRITICAL SECURITY FIX: Enforce MQTT protocol state machine
+		// According to MQTT spec, the first packet from a client MUST be CONNECT
+		if clientID == "" && pk.FixedHeader.Type != packets.Connect {
+			log.Printf("[ERROR] Protocol violation: Client %s sent packet type %d before CONNECT. Closing connection.", conn.RemoteAddr(), pk.FixedHeader.Type)
+			// Close connection immediately for protocol violation
+			return
+		}
+
+		// SECURITY FIX: Prevent multiple CONNECT packets on the same connection
+		if pk.FixedHeader.Type == packets.Connect && sessionMailbox != nil {
+			log.Printf("[ERROR] Protocol violation: Client %s sent multiple CONNECT packets. Closing connection.", conn.RemoteAddr())
+			// Close connection immediately for protocol violation
+			return
+		}
+
 		switch pk.FixedHeader.Type {
 		case packets.Connect:
 			clientID = pk.Connect.ClientIdentifier
@@ -994,8 +1009,34 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			log.Printf("[DEBUG] SUBSCRIBE packet received from client %s (remote: %s)", clientID, conn.RemoteAddr())
 			log.Printf("[DEBUG] SUBSCRIBE packet details - PacketID: %d, Filter count: %d", pk.PacketID, len(pk.Filters))
 
+			// CRITICAL SECURITY FIX: Ensure SUBSCRIBE only comes after CONNECT
 			if sessionMailbox == nil {
-				log.Printf("[ERROR] SUBSCRIBE received before CONNECT from %s", conn.RemoteAddr())
+				log.Printf("[ERROR] Protocol violation: Client %s sent SUBSCRIBE before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
+			// SECURITY FIX: SUBSCRIBE packets must have packet ID
+			if pk.PacketID == 0 {
+				log.Printf("[ERROR] SUBSCRIBE from client %s has packet ID 0. Protocol violation.", clientID)
+				// Send SUBACK with failure
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Suback},
+					PacketID:    1, // Use dummy packet ID since original is invalid
+					ReasonCodes: []byte{0x80}, // Unspecified error
+				}
+				writePacket(conn, &resp)
+				return
+			}
+
+			// SECURITY FIX: SUBSCRIBE must have at least one topic filter
+			if len(pk.Filters) == 0 {
+				log.Printf("[ERROR] SUBSCRIBE from client %s has no topic filters. Protocol violation.", clientID)
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Suback},
+					PacketID:    pk.PacketID,
+					ReasonCodes: []byte{0x83}, // Topic filter invalid
+				}
+				writePacket(conn, &resp)
 				return
 			}
 
@@ -1017,10 +1058,52 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			for i, sub := range pk.Filters {
 				log.Printf("[DEBUG] Processing subscription filter %d: Topic='%s', RequestedQoS=%d", i+1, sub.Filter, sub.Qos)
 
-				// Validate topic filter
+				// SECURITY FIX: Validate topic filter is not empty
 				if sub.Filter == "" {
 					log.Printf("[ERROR] Client %s sent empty topic filter in subscription %d", clientID, i+1)
+					reasonCodes = append(reasonCodes, 0x83) // Topic filter invalid
+					continue
+				}
+
+				// SECURITY FIX: Validate QoS level (MQTT spec allows 0, 1, 2 only)
+				if sub.Qos > 2 {
+					log.Printf("[ERROR] Client %s requested invalid QoS %d for topic %s. Protocol violation.", clientID, sub.Qos, sub.Filter)
 					reasonCodes = append(reasonCodes, 0x80) // Unspecified error
+					continue
+				}
+
+				// SECURITY FIX: Validate wildcard positions in topic filter
+				if strings.Contains(sub.Filter, "#") {
+					// Multi-level wildcard # must be last character and preceded by /
+					if !strings.HasSuffix(sub.Filter, "#") || (len(sub.Filter) > 1 && !strings.HasSuffix(sub.Filter, "/#")) {
+						log.Printf("[ERROR] Client %s has invalid # wildcard position in topic filter '%s'. Protocol violation.", clientID, sub.Filter)
+						reasonCodes = append(reasonCodes, 0x83) // Topic filter invalid
+						continue
+					}
+				}
+				if strings.Contains(sub.Filter, "+") {
+					// Single-level wildcard + must be at topic level boundaries
+					parts := strings.Split(sub.Filter, "/")
+					validWildcard := true
+					for _, part := range parts {
+						if strings.Contains(part, "+") && part != "+" {
+							validWildcard = false
+							break
+						}
+					}
+					if !validWildcard {
+						log.Printf("[ERROR] Client %s has invalid + wildcard position in topic filter '%s'. Protocol violation.", clientID, sub.Filter)
+						reasonCodes = append(reasonCodes, 0x83) // Topic filter invalid
+						continue
+					}
+				}
+
+				// SECURITY FIX: Topic filter injection protection
+				if strings.Contains(sub.Filter, "../") || strings.Contains(sub.Filter, "..\\") ||
+					strings.Contains(sub.Filter, "$(") || strings.Contains(sub.Filter, "';") ||
+					strings.Contains(sub.Filter, "<script") || strings.ContainsAny(sub.Filter, "\x00\x01\x02\x03\x04\x05") {
+					log.Printf("[ERROR] Client %s contains malicious topic filter '%s'. Security violation.", clientID, sub.Filter)
+					reasonCodes = append(reasonCodes, 0x87) // Not authorized
 					continue
 				}
 
@@ -1101,6 +1184,102 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			}
 
 		case packets.Publish:
+			// CRITICAL SECURITY FIX: Ensure PUBLISH only comes after CONNECT
+			if sessionMailbox == nil {
+				log.Printf("[ERROR] Protocol violation: Client %s sent PUBLISH before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
+			// SECURITY FIX: Validate topic name (empty topics not allowed)
+			if pk.TopicName == "" {
+				log.Printf("[ERROR] PUBLISH from client %s has empty topic name. Protocol violation.", clientID)
+				if pk.FixedHeader.Qos > 0 {
+					var respType byte = packets.Puback
+					if pk.FixedHeader.Qos == 2 {
+						respType = packets.Pubrec
+					}
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: respType},
+						PacketID:    pk.PacketID,
+						ReasonCode:  0x82, // Protocol Error
+					}
+					writePacket(conn, &resp)
+				}
+				return
+			}
+
+			// SECURITY FIX: Validate QoS and packet ID compliance
+			if pk.FixedHeader.Qos > 2 {
+				log.Printf("[ERROR] PUBLISH from client %s has invalid QoS %d. Protocol violation.", clientID, pk.FixedHeader.Qos)
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Disconnect},
+					ReasonCode:  0x81, // Malformed Packet
+				}
+				writePacket(conn, &resp)
+				return
+			}
+
+			// SECURITY FIX: Packet ID must be provided for QoS > 0
+			if pk.FixedHeader.Qos > 0 && pk.PacketID == 0 {
+				log.Printf("[ERROR] PUBLISH from client %s has QoS %d but packet ID is 0. Protocol violation.", clientID, pk.FixedHeader.Qos)
+				var respType byte = packets.Puback
+				if pk.FixedHeader.Qos == 2 {
+					respType = packets.Pubrec
+				}
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: respType},
+					PacketID:    1, // Use dummy packet ID since original is invalid
+					ReasonCode:  0x82, // Protocol Error
+				}
+				writePacket(conn, &resp)
+				return
+			}
+
+			// SECURITY FIX: Validate DUP flag usage (only valid for QoS > 0)
+			if pk.FixedHeader.Dup && pk.FixedHeader.Qos == 0 {
+				log.Printf("[ERROR] PUBLISH from client %s has DUP flag set for QoS 0. Protocol violation.", clientID)
+				// For QoS 0, we just log the error but don't send a response (MQTT spec)
+				return
+			}
+
+			// SECURITY FIX: Check for wildcards in PUBLISH topic (not allowed)
+			if strings.Contains(pk.TopicName, "#") || strings.Contains(pk.TopicName, "+") {
+				log.Printf("[ERROR] PUBLISH from client %s contains wildcards in topic name '%s'. Protocol violation.", clientID, pk.TopicName)
+				if pk.FixedHeader.Qos > 0 {
+					var respType byte = packets.Puback
+					if pk.FixedHeader.Qos == 2 {
+						respType = packets.Pubrec
+					}
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: respType},
+						PacketID:    pk.PacketID,
+						ReasonCode:  0x82, // Protocol Error
+					}
+					writePacket(conn, &resp)
+				}
+				return
+			}
+
+			// SECURITY FIX: Topic filter injection protection
+			if strings.Contains(pk.TopicName, "../") || strings.Contains(pk.TopicName, "..\\") ||
+				strings.Contains(pk.TopicName, "$(") || strings.Contains(pk.TopicName, "';") ||
+				strings.Contains(pk.TopicName, "<script") || strings.ContainsAny(pk.TopicName, "\x00\x01\x02\x03\x04\x05") {
+				log.Printf("[ERROR] PUBLISH from client %s contains malicious topic '%s'. Security violation.", clientID, pk.TopicName)
+				if pk.FixedHeader.Qos > 0 {
+					var respType byte = packets.Puback
+					if pk.FixedHeader.Qos == 2 {
+						respType = packets.Pubrec
+					}
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: respType},
+						PacketID:    pk.PacketID,
+						ReasonCode:  0x87, // Not authorized
+					}
+					writePacket(conn, &resp)
+				}
+				return
+			}
+
 			// Check message size limit (MQTT spec recommends broker-specific limits)
 			const maxMessageSize = 1024 * 1024 // 1MB limit
 			if len(pk.Payload) > maxMessageSize {
@@ -1128,13 +1307,8 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			// Validate QoS level for publish (MQTT spec allows 0, 1, 2 only)
+			// Use validated QoS level
 			publishQoS := pk.FixedHeader.Qos
-			if pk.FixedHeader.Qos > 2 {
-				log.Printf("Client %s attempted to publish with invalid QoS %d, downgrading to QoS 2",
-					clientID, pk.FixedHeader.Qos)
-				publishQoS = 2
-			}
 
 			// Handle MQTT 5.0 topic aliases
 			var resolvedTopic string
@@ -1264,11 +1438,35 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			// QoS 0: No acknowledgment needed
 
 		case packets.Puback:
+			// CRITICAL SECURITY FIX: Ensure PUBACK only comes after CONNECT
+			if sessionMailbox == nil {
+				log.Printf("[ERROR] Protocol violation: Client %s sent PUBACK before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
+			// SECURITY FIX: PUBACK must have valid packet ID
+			if pk.PacketID == 0 {
+				log.Printf("[ERROR] PUBACK from client %s has packet ID 0. Protocol violation.", clientID)
+				return
+			}
+
 			// QoS 1 publish acknowledgment from client
 			log.Printf("Client %s sent PUBACK for packet ID %d", clientID, pk.PacketID)
 			// In a full implementation, we would remove this message from pending acks
 
 		case packets.Pubrec:
+			// CRITICAL SECURITY FIX: Ensure PUBREC only comes after CONNECT
+			if sessionMailbox == nil {
+				log.Printf("[ERROR] Protocol violation: Client %s sent PUBREC before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
+			// SECURITY FIX: PUBREC must have valid packet ID
+			if pk.PacketID == 0 {
+				log.Printf("[ERROR] PUBREC from client %s has packet ID 0. Protocol violation.", clientID)
+				return
+			}
+
 			// QoS 2 publish receive from client - send PUBREL response
 			log.Printf("Client %s sent PUBREC for packet ID %d", clientID, pk.PacketID)
 			resp := packets.Packet{
@@ -1278,6 +1476,18 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			err = writePacket(conn, &resp)
 
 		case packets.Pubrel:
+			// CRITICAL SECURITY FIX: Ensure PUBREL only comes after CONNECT
+			if sessionMailbox == nil {
+				log.Printf("[ERROR] Protocol violation: Client %s sent PUBREL before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
+			// SECURITY FIX: PUBREL must have valid packet ID
+			if pk.PacketID == 0 {
+				log.Printf("[ERROR] PUBREL from client %s has packet ID 0. Protocol violation.", clientID)
+				return
+			}
+
 			// QoS 2 publish release from client - send PUBCOMP response
 			log.Printf("Client %s sent PUBREL for packet ID %d", clientID, pk.PacketID)
 			resp := packets.Packet{
@@ -1287,11 +1497,29 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			err = writePacket(conn, &resp)
 
 		case packets.Pubcomp:
+			// CRITICAL SECURITY FIX: Ensure PUBCOMP only comes after CONNECT
+			if sessionMailbox == nil {
+				log.Printf("[ERROR] Protocol violation: Client %s sent PUBCOMP before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
+			// SECURITY FIX: PUBCOMP must have valid packet ID
+			if pk.PacketID == 0 {
+				log.Printf("[ERROR] PUBCOMP from client %s has packet ID 0. Protocol violation.", clientID)
+				return
+			}
+
 			// QoS 2 publish complete from client
 			log.Printf("Client %s sent PUBCOMP for packet ID %d", clientID, pk.PacketID)
 			// In a full implementation, we would remove this message from pending acks
 
 		case packets.Pingreq:
+			// SECURITY FIX: Ensure PINGREQ only comes after CONNECT
+			if sessionMailbox == nil {
+				log.Printf("[ERROR] Protocol violation: Client %s sent PINGREQ before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
 			resp := packets.Packet{FixedHeader: packets.FixedHeader{Type: packets.Pingresp}}
 			err = writePacket(conn, &resp)
 
@@ -1299,8 +1527,34 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			log.Printf("[DEBUG] UNSUBSCRIBE packet received from client %s (remote: %s)", clientID, conn.RemoteAddr())
 			log.Printf("[DEBUG] UNSUBSCRIBE packet details - PacketID: %d, Filter count: %d", pk.PacketID, len(pk.Filters))
 
+			// CRITICAL SECURITY FIX: Ensure UNSUBSCRIBE only comes after CONNECT
 			if sessionMailbox == nil {
-				log.Printf("[ERROR] UNSUBSCRIBE received before CONNECT from %s", conn.RemoteAddr())
+				log.Printf("[ERROR] Protocol violation: Client %s sent UNSUBSCRIBE before CONNECT. Closing connection.", conn.RemoteAddr())
+				return
+			}
+
+			// SECURITY FIX: UNSUBSCRIBE packets must have packet ID
+			if pk.PacketID == 0 {
+				log.Printf("[ERROR] UNSUBSCRIBE from client %s has packet ID 0. Protocol violation.", clientID)
+				// Send UNSUBACK with failure
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Unsuback},
+					PacketID:    1, // Use dummy packet ID since original is invalid
+					ReasonCodes: []byte{0x80}, // Unspecified error
+				}
+				writePacket(conn, &resp)
+				return
+			}
+
+			// SECURITY FIX: UNSUBSCRIBE must have at least one topic filter
+			if len(pk.Filters) == 0 {
+				log.Printf("[ERROR] UNSUBSCRIBE from client %s has no topic filters. Protocol violation.", clientID)
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Unsuback},
+					PacketID:    pk.PacketID,
+					ReasonCodes: []byte{0x83}, // Topic filter invalid
+				}
+				writePacket(conn, &resp)
 				return
 			}
 
