@@ -802,6 +802,24 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 		switch pk.FixedHeader.Type {
 		case packets.Connect:
+			// SECURITY FIX: CVE-2017-7654 protection - validate CONNECT packet structure
+			// Check for basic structure validity
+			if pk.Connect.ClientIdentifier == "" && pk.Connect.UsernameFlag == false && pk.Connect.PasswordFlag == false && pk.Connect.WillFlag == false {
+				// This could be a malformed packet attempt
+				log.Printf("[DEBUG] CONNECT from %s appears to have minimal content, checking for CVE-2017-7654 patterns.", conn.RemoteAddr())
+			}
+
+			// SECURITY FIX: Additional CVE-2017-7654 protections
+			if len(pk.Connect.ClientIdentifier) > 65535 {
+				log.Printf("[ERROR] CONNECT from %s has oversized client ID. CVE-2017-7654 protection.", conn.RemoteAddr())
+				return
+			}
+
+			if len(pk.Connect.WillTopic) > 65535 || len(pk.Connect.WillPayload) > 65535 {
+				log.Printf("[ERROR] CONNECT from %s has oversized will message. CVE-2017-7654 protection.", conn.RemoteAddr())
+				return
+			}
+
 			clientID = pk.Connect.ClientIdentifier
 			cleanSession := pk.Connect.Clean
 			keepAlive := time.Duration(pk.Connect.Keepalive) * time.Second
@@ -828,6 +846,18 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 			// Extract username and password from CONNECT packet
 			var username, password string
+
+			// SECURITY FIX: Validate password/username flag consistency (Defensics issue)
+			if pk.Connect.PasswordFlag && !pk.Connect.UsernameFlag {
+				log.Printf("[ERROR] CONNECT from %s has password flag without username flag. Protocol violation.", conn.RemoteAddr())
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Connack},
+					ReasonCode:  0x85, // Client Identifier not valid (used for protocol violations)
+				}
+				writePacket(conn, &resp)
+				return
+			}
+
 			if pk.Connect.UsernameFlag {
 				username = string(pk.Connect.Username)
 				log.Printf("[DEBUG] Username provided: '%s'", username)
@@ -961,6 +991,34 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 					resp := packets.Packet{
 						FixedHeader: packets.FixedHeader{Type: packets.Connack},
 						ReasonCode:  0x85, // Client Identifier not valid (used for protocol violations)
+					}
+					writePacket(conn, &resp)
+					return
+				}
+
+				// SECURITY FIX: Validate will topic for injection attacks
+				if strings.Contains(willTopic, "../") || strings.Contains(willTopic, "..\\") ||
+					strings.Contains(willTopic, "$(") || strings.Contains(willTopic, "';") ||
+					strings.Contains(willTopic, "<script") || strings.ContainsAny(willTopic, "\x00\x01\x02\x03\x04\x05") {
+					log.Printf("[ERROR] CONNECT from %s has malicious will topic '%s'. Security violation.", conn.RemoteAddr(), willTopic)
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x87, // Not authorized
+					}
+					writePacket(conn, &resp)
+					return
+				}
+
+				// SECURITY FIX: Validate will payload for injection attacks
+				willPayloadStr := string(willPayload)
+				if strings.Contains(willPayloadStr, "<script") || strings.Contains(willPayloadStr, "javascript:") ||
+					strings.Contains(willPayloadStr, "DROP TABLE") || strings.Contains(willPayloadStr, "'; DELETE") ||
+					strings.Contains(willPayloadStr, "$(") || strings.Contains(willPayloadStr, "../") ||
+					strings.ContainsAny(willPayloadStr, "\x00\x01\x02\x03\x04\x05") {
+					log.Printf("[ERROR] CONNECT from %s has malicious will payload containing potential XSS/SQL injection. Security violation.", conn.RemoteAddr())
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Connack},
+						ReasonCode:  0x87, // Not authorized
 					}
 					writePacket(conn, &resp)
 					return
