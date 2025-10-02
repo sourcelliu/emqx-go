@@ -205,10 +205,13 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 				pk.PacketID = 1
 			}
 			var buf bytes.Buffer
-			if err := pk.PublishEncode(&buf); err != nil {
+
+			// Fixed: Use manual encoding to avoid mochi-mqtt payload prefix issues
+			if err := s.encodePublishPacket(&buf, pk, m.QoS); err != nil {
 				log.Printf("Error encoding publish packet for %s: %v", s.ID, err)
 				continue
 			}
+
 			if _, err := s.conn.Write(buf.Bytes()); err != nil {
 				log.Printf("Error writing to client %s: %v", s.ID, err)
 				// Returning an error will cause the supervisor to treat this as a
@@ -219,4 +222,69 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 			log.Printf("Session actor for %s received unknown message type: %T", s.ID, m)
 		}
 	}
+}
+
+// encodePublishPacket manually encodes a PUBLISH packet to fix payload format issues
+func (s *Session) encodePublishPacket(w io.Writer, pk *packets.Packet, qos byte) error {
+	// Fixed header
+	packetType := byte(3) // PUBLISH
+	flags := (qos << 1) & 0x06
+	if pk.FixedHeader.Retain {
+		flags |= 0x01
+	}
+	fixedHeaderByte := (packetType << 4) | flags
+
+	// Variable header
+	var vh bytes.Buffer
+
+	// Topic name (UTF-8 string with length prefix)
+	topicBytes := []byte(pk.TopicName)
+	vh.WriteByte(byte(len(topicBytes) >> 8))
+	vh.WriteByte(byte(len(topicBytes) & 0xFF))
+	vh.Write(topicBytes)
+
+	// Packet ID (only for QoS > 0)
+	if qos > 0 {
+		vh.WriteByte(byte(pk.PacketID >> 8))
+		vh.WriteByte(byte(pk.PacketID & 0xFF))
+	}
+
+	// Calculate remaining length
+	remainingLength := vh.Len() + len(pk.Payload)
+
+	// Write fixed header
+	if _, err := w.Write([]byte{fixedHeaderByte}); err != nil {
+		return err
+	}
+
+	// Write remaining length (simplified for lengths < 128)
+	if remainingLength < 128 {
+		if _, err := w.Write([]byte{byte(remainingLength)}); err != nil {
+			return err
+		}
+	} else {
+		// Handle multi-byte remaining length encoding
+		for remainingLength > 0 {
+			b := byte(remainingLength % 128)
+			remainingLength = remainingLength / 128
+			if remainingLength > 0 {
+				b |= 0x80
+			}
+			if _, err := w.Write([]byte{b}); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Write variable header
+	if _, err := w.Write(vh.Bytes()); err != nil {
+		return err
+	}
+
+	// Write payload (without any prefixes)
+	if _, err := w.Write(pk.Payload); err != nil {
+		return err
+	}
+
+	return nil
 }

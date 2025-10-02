@@ -154,6 +154,17 @@ func DecodePublish(fh *FixedHeader, r io.Reader) (*PublishPacket, error) {
 		return nil, err
 	}
 	packet.TopicName = topicName
+
+	// Check QoS level from flags to determine if Packet ID is present
+	qosLevel := (fh.Flags >> 1) & 0x03
+	if qosLevel > 0 {
+		// Skip Packet ID (2 bytes) for QoS 1 and QoS 2
+		if len(buf) < offset+2 {
+			return nil, errors.New("buffer too short to read packet ID")
+		}
+		offset += 2
+	}
+
 	packet.Payload = buf[offset:]
 	return packet, nil
 }
@@ -205,22 +216,32 @@ func EncodeSuback(w io.Writer, p *SubackPacket) error {
 
 // EncodePublish encodes a PublishPacket and writes it to the provided io.Writer.
 // It assembles the fixed header, variable header (topic name), and payload.
-// Note: This simplified encoder does not handle QoS > 0, so it does not encode
-// a Message ID.
+// This function now properly handles QoS levels by including Message ID when needed.
 //
 // - w: The io.Writer to write the encoded packet to.
 // - p: The PublishPacket to encode.
+// - qos: The QoS level (0, 1, or 2).
+// - packetID: The packet ID (used for QoS > 0).
 //
 // Returns an error if the write operation fails.
-func EncodePublish(w io.Writer, p *PublishPacket) error {
+func EncodePublish(w io.Writer, p *PublishPacket, qos byte, packetID uint16) error {
 	var vh bytes.Buffer
 	topicBytes := []byte(p.TopicName)
 	vh.WriteByte(byte(len(topicBytes) >> 8))
 	vh.WriteByte(byte(len(topicBytes) & 0xFF))
 	vh.Write(topicBytes)
 
+	// Add packet ID for QoS > 0
+	if qos > 0 {
+		vh.WriteByte(byte(packetID >> 8))
+		vh.WriteByte(byte(packetID & 0xFF))
+	}
+
+	// Calculate flags based on QoS
+	flags := (qos << 1) & 0x06
+
 	remLength := vh.Len() + len(p.Payload)
-	header := []byte{TypePUBLISH << 4, byte(remLength)}
+	header := []byte{(TypePUBLISH << 4) | flags, byte(remLength)}
 	if _, err := w.Write(header); err != nil {
 		return err
 	}

@@ -1,0 +1,47 @@
+{
+  "name": "emqx-go-e2e-tests",
+  "version": "2.0.0",
+  "description": "Comprehensive MQTTX test suite for emqx-go MQTT broker with 1000+ test cases",
+  "main": "mqttx-comprehensive-runner.js",
+  "scripts": {
+    "test": "node mqttx-comprehensive-runner.js",
+    "test:comprehensive": "node mqttx-comprehensive-runner.js",
+    "test:parallel": "node mqttx-comprehensive-runner.js --parallel",
+    "test:stop-on-failure": "node mqttx-comprehensive-runner.js --stop-on-failure",
+    "test:basic": "node mqttx-basic-operations.js",
+    "test:protocol": "node mqttx-protocol-compliance.js",
+    "test:topics": "node mqttx-topic-management.js",
+    "test:performance": "node mqttx-concurrency-performance.js",
+    "test:security": "node mqttx-security-auth.js",
+    "test:errors": "node mqttx-error-handling.js",
+    "test:realworld": "node mqttx-realworld-scenarios.js",
+    "test:mqtt5": "node mqttx-advanced-mqtt5.js",
+    "test:websocket": "node mqttx-websocket-transport.js",
+    "test:edge-cases": "node mqttx-protocol-edge-cases.js",
+    "test:large-scale": "node mqttx-large-scale-integration.js",
+    "test:iot": "node mqttx-iot-scenarios.js",
+    "test:compliance": "node mqttx-security-compliance.js",
+    "debug": "node debug-payload.js",
+    "legacy": "node run-all-tests.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.0.0"
+  },
+  "devDependencies": {},
+  "keywords": [
+    "mqtt",
+    "mqttx",
+    "testing",
+    "e2e",
+    "iot",
+    "broker",
+    "emqx",
+    "comprehensive",
+    "1000-tests"
+  ],
+  "author": "emqx-go Test Team",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
