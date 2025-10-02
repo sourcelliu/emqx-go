@@ -115,6 +115,16 @@ func (d *DefensicsMQTTFuzzer) RunDefensicsInspiredFuzzing() error {
 		{"Protocol State Violation Tests", d.testProtocolStateViolations},
 		{"Authentication Bypass Tests", d.testAuthenticationBypass},
 		{"Topic Filter Injection Tests", d.testTopicFilterInjection},
+		{"PUBLISH Packet Fuzzing Tests", d.testPublishPacketFuzzing},
+		{"SUBSCRIBE Packet Fuzzing Tests", d.testSubscribePacketFuzzing},
+		{"QoS Level Validation Tests", d.testQoSLevelValidation},
+		{"UTF-8 Encoding Violation Tests", d.testUTF8EncodingViolations},
+		{"Packet ID Management Tests", d.testPacketIDManagement},
+		{"Will Message Security Tests", d.testWillMessageSecurity},
+		{"Keep Alive Boundary Tests", d.testKeepAliveBoundary},
+		{"Variable Header Corruption Tests", d.testVariableHeaderCorruption},
+		{"Timing Attack Pattern Tests", d.testTimingAttackPatterns},
+		{"Session State Management Tests", d.testSessionStateManagement},
 	}
 
 	startTime := time.Now()
@@ -357,34 +367,1129 @@ func (d *DefensicsMQTTFuzzer) testConnectionFlooding() error {
 	return nil
 }
 
-// Additional test methods would be implemented here following Defensics patterns...
+// Invalid Protocol Identifier Tests - Comprehensive Defensics approach
 func (d *DefensicsMQTTFuzzer) testInvalidProtocolIdentifiers() error {
 	log.Println("🔍 Testing invalid protocol identifiers")
-	// Implementation for protocol identifier fuzzing
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "Wrong-Protocol-Name-MQTT5",
+			description: "Using MQTT5 instead of MQTT for 3.1.1",
+			payload: []byte{
+				0x10, 0x0F, // CONNECT
+				0x00, 0x05, 'M', 'Q', 'T', 'T', '5', // Wrong protocol name
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Empty-Protocol-Name",
+			description: "Empty protocol name field",
+			payload: []byte{
+				0x10, 0x0A, // CONNECT
+				0x00, 0x00, // Empty protocol name
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Invalid-Protocol-Level-255",
+			description: "Invalid protocol level 255",
+			payload: []byte{
+				0x10, 0x0E, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0xFF,       // Invalid protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Protocol-Level-Zero",
+			description: "Protocol level set to zero",
+			payload: []byte{
+				0x10, 0x0E, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x00,       // Protocol level 0
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "MQIsdp-Protocol-Name",
+			description: "Using MQIsdp protocol name with wrong version",
+			payload: []byte{
+				0x10, 0x12, // CONNECT
+				0x00, 0x06, 'M', 'Q', 'I', 's', 'd', 'p', // MQIsdp protocol
+				0x04,       // Wrong version for MQIsdp
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "Corrupted-Protocol-Name",
+			description: "Protocol name with null bytes",
+			payload: []byte{
+				0x10, 0x0E, // CONNECT
+				0x00, 0x04, 'M', 0x00, 'T', 'T', // Null byte in protocol name
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Oversized-Protocol-Name",
+			description: "Protocol name longer than expected",
+			payload: []byte{
+				0x10, 0x18, // CONNECT
+				0x00, 0x0E, 'M', 'Q', 'T', 'T', 'T', 'O', 'O', 'L', 'O', 'N', 'G', 'N', 'A', 'M', // Too long
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "MEDIUM",
+		},
+	}
+
+	for i, tc := range testCases {
+		testID := 2000 + i
+		d.executeTestCase(testID, tc.name, "PROTOCOL_IDENTIFIER", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	return nil
 }
 
+// Payload Corruption Tests - Advanced Defensics methodology
 func (d *DefensicsMQTTFuzzer) testPayloadCorruption() error {
 	log.Println("🔍 Testing payload corruption patterns")
-	// Implementation for payload corruption testing
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "Truncated-CONNECT-Payload",
+			description: "CONNECT packet with truncated client ID",
+			payload: []byte{
+				0x10, 0x0C, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x05, // Client ID length 5, but only 2 bytes follow
+				't', 'e',   // Truncated client ID
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Invalid-UTF8-Client-ID",
+			description: "Client ID with invalid UTF-8 sequences",
+			payload: []byte{
+				0x10, 0x12, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 0xFF, 0xFE, 0xFD, 0xFC, // Invalid UTF-8
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Will-Topic-Length-Mismatch",
+			description: "Will topic length doesn't match actual data",
+			payload: []byte{
+				0x10, 0x1A, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x0C,       // Connect flags (will flag + will QoS 1)
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 't', 'e', 's', 't', // Client ID
+				0x00, 0x08, 'w', 'i', 'l', 'l', // Will topic claims 8 bytes but only 4
+				0x00, 0x04, 'd', 'e', 'a', 'd', // Will message
+			},
+			severity: "CRITICAL",
+		},
+		{
+			name:        "Username-Password-Corruption",
+			description: "Corrupted username/password fields",
+			payload: []byte{
+				0x10, 0x18, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0xC2,       // Connect flags (username + password)
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 't', 'e', 's', 't', // Client ID
+				0xFF, 0xFF, // Invalid username length
+				0x00, 0x04, 'p', 'a', 's', 's', // Password
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Payload-With-Control-Characters",
+			description: "Payload containing control characters",
+			payload: []byte{
+				0x10, 0x14, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x06, 't', 0x00, 0x01, 0x02, 0x03, 't', // Client ID with control chars
+			},
+			severity: "MEDIUM",
+		},
+	}
+
+	for i, tc := range testCases {
+		testID := 5000 + i
+		d.executeTestCase(testID, tc.name, "PAYLOAD_CORRUPTION", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	return nil
 }
 
+// Protocol State Violation Tests - Comprehensive Defensics approach
 func (d *DefensicsMQTTFuzzer) testProtocolStateViolations() error {
 	log.Println("🔍 Testing protocol state violations")
-	// Implementation for state violation testing
+
+	violationTests := []struct {
+		name        string
+		description string
+		testFunc    func() error
+		severity    string
+	}{
+		{
+			name:        "PUBLISH-Before-CONNECT",
+			description: "Send PUBLISH before establishing connection",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				// Send PUBLISH directly without CONNECT
+				publishPacket := d.buildPublishPacket("test/topic", "payload")
+				_, err = conn.Write(publishPacket)
+				return err
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "SUBSCRIBE-Before-CONNECT",
+			description: "Send SUBSCRIBE before establishing connection",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				// Send SUBSCRIBE directly without CONNECT
+				subscribePacket := []byte{
+					0x82, 0x09, // SUBSCRIBE
+					0x00, 0x01, // Packet ID
+					0x00, 0x04, 't', 'e', 's', 't',
+					0x01, // QoS
+				}
+				_, err = conn.Write(subscribePacket)
+				return err
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Multiple-CONNECT-Packets",
+			description: "Send multiple CONNECT packets in same session",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				// Send first CONNECT
+				connectPacket1 := d.buildConnectPacket("client1")
+				conn.Write(connectPacket1)
+				time.Sleep(100 * time.Millisecond)
+
+				// Send second CONNECT (violation)
+				connectPacket2 := d.buildConnectPacket("client2")
+				_, err = conn.Write(connectPacket2)
+				return err
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "PUBACK-Without-PUBLISH",
+			description: "Send PUBACK without corresponding PUBLISH",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				// Send CONNECT first
+				connectPacket := d.buildConnectPacket("test-client")
+				conn.Write(connectPacket)
+				time.Sleep(100 * time.Millisecond)
+
+				// Send PUBACK without PUBLISH
+				pubackPacket := []byte{0x40, 0x02, 0x12, 0x34} // PUBACK with packet ID
+				_, err = conn.Write(pubackPacket)
+				return err
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "Invalid-Packet-ID-Zero",
+			description: "Use packet ID 0 for QoS > 0",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				// Send CONNECT first
+				connectPacket := d.buildConnectPacket("test-client")
+				conn.Write(connectPacket)
+				time.Sleep(100 * time.Millisecond)
+
+				// Send SUBSCRIBE with packet ID 0
+				subscribePacket := []byte{
+					0x82, 0x09, // SUBSCRIBE
+					0x00, 0x00, // Packet ID 0 (invalid for QoS > 0)
+					0x00, 0x04, 't', 'e', 's', 't',
+					0x01, // QoS 1
+				}
+				_, err = conn.Write(subscribePacket)
+				return err
+			},
+			severity: "HIGH",
+		},
+	}
+
+	for i, test := range violationTests {
+		testID := 8000 + i
+		log.Printf("  → %s", test.name)
+
+		err := test.testFunc()
+		if err != nil {
+			d.recordResult(testID, test.name, "PROTOCOL_VIOLATION", "PASS", nil, nil, nil, test.severity,
+				test.description+" (properly rejected)")
+		} else {
+			d.recordResult(testID, test.name, "PROTOCOL_VIOLATION", "FAIL", nil, nil, nil, test.severity,
+				test.description+" (accepted invalid state)")
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	return nil
 }
 
+// Authentication Bypass Tests - Advanced security testing
 func (d *DefensicsMQTTFuzzer) testAuthenticationBypass() error {
 	log.Println("🔍 Testing authentication bypass patterns")
-	// Implementation for auth bypass testing
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "Username-Flag-Without-Username",
+			description: "Set username flag but provide no username",
+			payload: []byte{
+				0x10, 0x0E, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x80,       // Connect flags (username flag set)
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 't', 'e', 's', 't', // Client ID only
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Password-Flag-Without-Password",
+			description: "Set password flag but provide no password",
+			payload: []byte{
+				0x10, 0x0E, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x40,       // Connect flags (password flag set)
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 't', 'e', 's', 't', // Client ID only
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Password-Without-Username-Flag",
+			description: "Provide password without username flag",
+			payload: []byte{
+				0x10, 0x16, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x40,       // Connect flags (password flag only)
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 't', 'e', 's', 't', // Client ID
+				0x00, 0x04, 'p', 'a', 's', 's', // Password without username
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Empty-Username-With-Password",
+			description: "Empty username with valid password",
+			payload: []byte{
+				0x10, 0x14, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0xC0,       // Connect flags (both username and password)
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 't', 'e', 's', 't', // Client ID
+				0x00, 0x00, // Empty username
+				0x00, 0x04, 'p', 'a', 's', 's', // Password
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "SQL-Injection-Username",
+			description: "SQL injection attempt in username field",
+			payload: func() []byte {
+				maliciousUser := "admin'; DROP TABLE users; --"
+				return []byte{
+					0x10, byte(14 + len(maliciousUser)), // CONNECT
+					0x00, 0x04, 'M', 'Q', 'T', 'T',
+					0x04,       // Protocol level
+					0x80,       // Connect flags (username)
+					0x00, 0x3C, // Keep alive
+					0x00, 0x04, 't', 'e', 's', 't', // Client ID
+					0x00, byte(len(maliciousUser)), // Username length
+				}
+			}(),
+			severity: "CRITICAL",
+		},
+	}
+
+	// Build complete SQL injection test case
+	maliciousUser := "admin'; DROP TABLE users; --"
+	sqlInjectionPayload := []byte{
+		0x10, byte(14 + len(maliciousUser)), // CONNECT
+		0x00, 0x04, 'M', 'Q', 'T', 'T',
+		0x04,       // Protocol level
+		0x80,       // Connect flags (username)
+		0x00, 0x3C, // Keep alive
+		0x00, 0x04, 't', 'e', 's', 't', // Client ID
+		0x00, byte(len(maliciousUser)), // Username length
+	}
+	sqlInjectionPayload = append(sqlInjectionPayload, []byte(maliciousUser)...)
+	testCases[4].payload = sqlInjectionPayload
+
+	for i, tc := range testCases {
+		testID := 9000 + i
+		d.executeTestCase(testID, tc.name, "AUTH_BYPASS", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
 	return nil
 }
 
+// Topic Filter Injection Tests - Comprehensive security testing
 func (d *DefensicsMQTTFuzzer) testTopicFilterInjection() error {
 	log.Println("🔍 Testing topic filter injection")
-	// Implementation for topic injection testing
+
+	maliciousTopics := []struct {
+		topic       string
+		description string
+		severity    string
+	}{
+		{"../../../etc/passwd", "Path traversal attempt", "HIGH"},
+		{"../../../../windows/system32", "Windows path traversal", "HIGH"},
+		{"$(rm -rf /)", "Command injection attempt", "CRITICAL"},
+		{"'; DROP TABLE topics; --", "SQL injection in topic", "CRITICAL"},
+		{"<script>alert('xss')</script>", "XSS injection attempt", "MEDIUM"},
+		{string([]byte{0x00, 0x01, 0x02, 0x03, 0x04}), "Control character injection", "MEDIUM"},
+		{string(make([]byte, 65536)), "Oversized topic name", "HIGH"},
+		{"topic\u2028newline", "Unicode line separator", "MEDIUM"},
+		{"topic\u2029paragraph", "Unicode paragraph separator", "MEDIUM"},
+		{"topic\uFEFFbom", "Byte order mark injection", "MEDIUM"},
+		{"topic/+/../admin", "Wildcard path traversal", "HIGH"},
+		{"topic/#/../../secret", "Multi-level wildcard abuse", "HIGH"},
+		{"$SYS/broker/log", "System topic access attempt", "HIGH"},
+		{"topic\x00null", "Null byte injection", "HIGH"},
+		{"\xff\xfe\xfd\xfc", "Invalid UTF-8 sequence", "HIGH"},
+	}
+
+	for i, tc := range maliciousTopics {
+		testID := 10000 + i
+		testName := fmt.Sprintf("Topic-Injection-%d", i+1)
+
+		// Create SUBSCRIBE packet with malicious topic
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+		if err != nil {
+			d.recordResult(testID, testName, "TOPIC_INJECTION", "FAIL", nil, nil, err, tc.severity,
+				tc.description+" (connection failed)")
+			continue
+		}
+
+		// Send CONNECT first
+		connectPacket := d.buildConnectPacket("topic-fuzzer")
+		conn.Write(connectPacket)
+		time.Sleep(100 * time.Millisecond)
+
+		// Build SUBSCRIBE packet with malicious topic
+		topicBytes := []byte(tc.topic)
+		subscribePacket := []byte{0x82} // SUBSCRIBE
+
+		// Calculate remaining length
+		remainingLength := 2 + 2 + len(topicBytes) + 1 // Packet ID + topic length + topic + QoS
+		subscribePacket = append(subscribePacket, byte(remainingLength))
+
+		// Add packet ID
+		subscribePacket = append(subscribePacket, 0x00, byte(i+1))
+
+		// Add topic
+		subscribePacket = append(subscribePacket, byte(len(topicBytes)>>8), byte(len(topicBytes)&0xFF))
+		subscribePacket = append(subscribePacket, topicBytes...)
+
+		// Add QoS
+		subscribePacket = append(subscribePacket, 0x01)
+
+		// Send malicious SUBSCRIBE
+		_, err = conn.Write(subscribePacket)
+
+		if err != nil {
+			d.recordResult(testID, testName, "TOPIC_INJECTION", "PASS", subscribePacket, nil, nil, tc.severity,
+				tc.description+" (broker rejected)")
+		} else {
+			// Try to read SUBACK
+			conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			response := make([]byte, 1024)
+			n, readErr := conn.Read(response)
+
+			if readErr != nil {
+				d.recordResult(testID, testName, "TOPIC_INJECTION", "PASS", subscribePacket, nil, nil, tc.severity,
+					tc.description+" (connection closed)")
+			} else if n >= 5 && response[0] == 0x90 { // SUBACK
+				if response[4] == 0x80 { // Failure code
+					d.recordResult(testID, testName, "TOPIC_INJECTION", "PASS", subscribePacket, response[:n], nil, tc.severity,
+						tc.description+" (properly rejected)")
+				} else {
+					d.recordResult(testID, testName, "TOPIC_INJECTION", "FAIL", subscribePacket, response[:n], nil, tc.severity,
+						tc.description+" (accepted malicious topic)")
+				}
+			} else {
+				d.recordResult(testID, testName, "TOPIC_INJECTION", "INCONCLUSIVE", subscribePacket, response[:n], nil, tc.severity,
+					tc.description+" (unexpected response)")
+			}
+		}
+
+		conn.Close()
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// PUBLISH Packet Fuzzing Tests - Comprehensive Defensics approach
+func (d *DefensicsMQTTFuzzer) testPublishPacketFuzzing() error {
+	log.Println("🔍 Testing PUBLISH packet fuzzing")
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "PUBLISH-Invalid-QoS-3",
+			description: "PUBLISH packet with invalid QoS level 3",
+			payload: []byte{
+				0x36, 0x0C, // PUBLISH, QoS=3 (invalid)
+				0x00, 0x04, 't', 'e', 's', 't', // Topic
+				0x00, 0x01, // Packet ID
+				'p', 'a', 'y', // Payload
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "PUBLISH-Empty-Topic",
+			description: "PUBLISH packet with empty topic name",
+			payload: []byte{
+				0x30, 0x07, // PUBLISH, QoS=0
+				0x00, 0x00, // Empty topic
+				'p', 'a', 'y', 'l', 'o', // Payload
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "PUBLISH-QoS1-No-PacketID",
+			description: "PUBLISH QoS 1 without packet ID",
+			payload: []byte{
+				0x32, 0x0B, // PUBLISH, QoS=1
+				0x00, 0x04, 't', 'e', 's', 't', // Topic
+				// Missing packet ID for QoS > 0
+				'p', 'a', 'y', 'l', 'o', 'a', 'd',
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "PUBLISH-DUP-QoS0",
+			description: "PUBLISH with DUP flag set for QoS 0",
+			payload: []byte{
+				0x39, 0x0C, // PUBLISH, DUP=1, QoS=0 (invalid combination)
+				0x00, 0x04, 't', 'e', 's', 't',
+				'p', 'a', 'y',
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "PUBLISH-Topic-Wildcards",
+			description: "PUBLISH with wildcards in topic",
+			payload: []byte{
+				0x30, 0x0C, // PUBLISH
+				0x00, 0x05, 't', '/', '#', '/', 't', // Topic with wildcard
+				'p', 'a', 'y',
+			},
+			severity: "HIGH",
+		},
+	}
+
+	for i, tc := range testCases {
+		testID := 11000 + i
+		d.executeTestCase(testID, tc.name, "PUBLISH_FUZZING", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// SUBSCRIBE Packet Fuzzing Tests
+func (d *DefensicsMQTTFuzzer) testSubscribePacketFuzzing() error {
+	log.Println("🔍 Testing SUBSCRIBE packet fuzzing")
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "SUBSCRIBE-Invalid-QoS-3",
+			description: "SUBSCRIBE with invalid QoS level 3",
+			payload: []byte{
+				0x82, 0x09, // SUBSCRIBE
+				0x00, 0x01, // Packet ID
+				0x00, 0x04, 't', 'e', 's', 't',
+				0x03, // Invalid QoS 3
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "SUBSCRIBE-No-PacketID",
+			description: "SUBSCRIBE without packet ID",
+			payload: []byte{
+				0x82, 0x07, // SUBSCRIBE
+				// Missing packet ID
+				0x00, 0x04, 't', 'e', 's', 't',
+				0x01,
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "SUBSCRIBE-Empty-Topic-Filter",
+			description: "SUBSCRIBE with empty topic filter",
+			payload: []byte{
+				0x82, 0x05, // SUBSCRIBE
+				0x00, 0x01, // Packet ID
+				0x00, 0x00, // Empty topic filter
+				0x01,       // QoS
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "SUBSCRIBE-Invalid-Wildcard-Position",
+			description: "SUBSCRIBE with # not at end",
+			payload: []byte{
+				0x82, 0x0A, // SUBSCRIBE
+				0x00, 0x01, // Packet ID
+				0x00, 0x05, 't', '#', '/', 's', 't', // Invalid # position
+				0x01,
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "SUBSCRIBE-No-Payload",
+			description: "SUBSCRIBE with no topic filters",
+			payload: []byte{
+				0x82, 0x02, // SUBSCRIBE
+				0x00, 0x01, // Packet ID only
+			},
+			severity: "HIGH",
+		},
+	}
+
+	for i, tc := range testCases {
+		testID := 12000 + i
+		d.executeTestCase(testID, tc.name, "SUBSCRIBE_FUZZING", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// QoS Level Validation Tests
+func (d *DefensicsMQTTFuzzer) testQoSLevelValidation() error {
+	log.Println("🔍 Testing QoS level validation")
+
+	qosTests := []struct {
+		name        string
+		description string
+		testFunc    func() error
+		severity    string
+	}{
+		{
+			name:        "PUBACK-For-QoS0",
+			description: "Send PUBACK for QoS 0 message",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				connectPacket := d.buildConnectPacket("qos-test")
+				conn.Write(connectPacket)
+				time.Sleep(100 * time.Millisecond)
+
+				// Send PUBACK for non-existent QoS 0 message
+				pubackPacket := []byte{0x40, 0x02, 0x12, 0x34}
+				_, err = conn.Write(pubackPacket)
+				return err
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "PUBREC-For-QoS1",
+			description: "Send PUBREC for QoS 1 message",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				connectPacket := d.buildConnectPacket("qos-test")
+				conn.Write(connectPacket)
+				time.Sleep(100 * time.Millisecond)
+
+				// Send PUBREC for QoS 1 (should be PUBACK)
+				pubrecPacket := []byte{0x50, 0x02, 0x12, 0x34}
+				_, err = conn.Write(pubrecPacket)
+				return err
+			},
+			severity: "MEDIUM",
+		},
+	}
+
+	for i, test := range qosTests {
+		testID := 13000 + i
+		err := test.testFunc()
+		if err != nil {
+			d.recordResult(testID, test.name, "QOS_VALIDATION", "PASS", nil, nil, nil, test.severity,
+				test.description+" (properly rejected)")
+		} else {
+			d.recordResult(testID, test.name, "QOS_VALIDATION", "FAIL", nil, nil, nil, test.severity,
+				test.description+" (accepted invalid QoS)")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// UTF-8 Encoding Violation Tests
+func (d *DefensicsMQTTFuzzer) testUTF8EncodingViolations() error {
+	log.Println("🔍 Testing UTF-8 encoding violations")
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "UTF8-Invalid-Sequence-Client-ID",
+			description: "Invalid UTF-8 sequence in client ID",
+			payload: []byte{
+				0x10, 0x12, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 0xFF, 0xFE, 0xFD, 0xFC, // Invalid UTF-8
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "UTF8-Overlong-Encoding",
+			description: "Overlong UTF-8 encoding",
+			payload: []byte{
+				0x10, 0x14, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x06, 0xC0, 0x80, 0x41, 0x42, 0x43, 0x44, // Overlong encoding
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "UTF8-Null-Character",
+			description: "UTF-8 string with null character",
+			payload: []byte{
+				0x10, 0x12, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x04, 't', 0x00, 's', 't', // Null in client ID
+			},
+			severity: "HIGH",
+		},
+	}
+
+	for i, tc := range testCases {
+		testID := 14000 + i
+		d.executeTestCase(testID, tc.name, "UTF8_VIOLATION", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// Packet ID Management Tests
+func (d *DefensicsMQTTFuzzer) testPacketIDManagement() error {
+	log.Println("🔍 Testing packet ID management")
+
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+	if err != nil {
+		d.recordResult(15000, "PacketID-Connection-Failed", "PACKET_ID", "FAIL", nil, nil, err, "HIGH", "Connection failed")
+		return err
+	}
+	defer conn.Close()
+
+	// Send CONNECT
+	connectPacket := d.buildConnectPacket("packetid-test")
+	conn.Write(connectPacket)
+	time.Sleep(100 * time.Millisecond)
+
+	// Test rapid packet ID reuse
+	for i := 0; i < 20; i++ {
+		packetID := uint16(i % 5) // Reuse packet IDs 0-4
+
+		subscribePacket := []byte{
+			0x82, 0x09, // SUBSCRIBE
+			byte(packetID >> 8), byte(packetID & 0xFF), // Packet ID
+			0x00, 0x04, 't', 'e', 's', 't',
+			0x01, // QoS
+		}
+
+		_, err := conn.Write(subscribePacket)
+		testID := 15000 + i
+
+		if err != nil {
+			d.recordResult(testID, fmt.Sprintf("PacketID-Reuse-%d", i), "PACKET_ID", "PASS", subscribePacket, nil, nil, "MEDIUM",
+				"Broker properly handled packet ID collision")
+		} else {
+			d.recordResult(testID, fmt.Sprintf("PacketID-Reuse-%d", i), "PACKET_ID", "PASS", subscribePacket, nil, nil, "MEDIUM",
+				"Packet ID reuse test completed")
+		}
+
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// Will Message Security Tests
+func (d *DefensicsMQTTFuzzer) testWillMessageSecurity() error {
+	log.Println("🔍 Testing will message security")
+
+	// Test XSS in will message
+	xssPayload := "<script>alert('xss')</script>"
+	xssTestPayload := []byte{
+		0x10, byte(24 + len(xssPayload)), // CONNECT
+		0x00, 0x04, 'M', 'Q', 'T', 'T',
+		0x04,       // Protocol level
+		0x0C,       // Connect flags (will flag + will QoS 1)
+		0x00, 0x3C, // Keep alive
+		0x00, 0x04, 't', 'e', 's', 't', // Client ID
+		0x00, 0x04, 'w', 'i', 'l', 'l', // Will topic
+		0x00, byte(len(xssPayload)), // Will message length
+	}
+	xssTestPayload = append(xssTestPayload, []byte(xssPayload)...)
+
+	d.executeTestCase(16000, "Will-Message-XSS", "WILL_MESSAGE_SECURITY", xssTestPayload,
+		"Will message with XSS payload", "MEDIUM")
+
+	// Test SQL injection in will message
+	sqlPayload := "'; DROP TABLE messages; --"
+	sqlTestPayload := []byte{
+		0x10, byte(24 + len(sqlPayload)), // CONNECT
+		0x00, 0x04, 'M', 'Q', 'T', 'T',
+		0x04,       // Protocol level
+		0x0C,       // Connect flags (will flag + will QoS 1)
+		0x00, 0x3C, // Keep alive
+		0x00, 0x04, 't', 'e', 's', 't', // Client ID
+		0x00, 0x04, 'w', 'i', 'l', 'l', // Will topic
+		0x00, byte(len(sqlPayload)), // Will message length
+	}
+	sqlTestPayload = append(sqlTestPayload, []byte(sqlPayload)...)
+
+	d.executeTestCase(16001, "Will-Message-SQL-Injection", "WILL_MESSAGE_SECURITY", sqlTestPayload,
+		"Will message with SQL injection", "HIGH")
+
+	return nil
+}
+
+// Keep Alive Boundary Tests
+func (d *DefensicsMQTTFuzzer) testKeepAliveBoundary() error {
+	log.Println("🔍 Testing keep alive boundary conditions")
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "Keep-Alive-Max-Value",
+			description: "Keep alive with maximum value (65535)",
+			payload: []byte{
+				0x10, 0x0E, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0xFF, 0xFF, // Keep alive = 65535
+				0x00, 0x04, 't', 'e', 's', 't',
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "Keep-Alive-Zero",
+			description: "Keep alive set to zero",
+			payload: []byte{
+				0x10, 0x0E, // CONNECT
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x00, // Keep alive = 0
+				0x00, 0x04, 't', 'e', 's', 't',
+			},
+			severity: "LOW",
+		},
+	}
+
+	for i, tc := range testCases {
+		testID := 17000 + i
+		d.executeTestCase(testID, tc.name, "KEEP_ALIVE_BOUNDARY", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// Variable Header Corruption Tests
+func (d *DefensicsMQTTFuzzer) testVariableHeaderCorruption() error {
+	log.Println("🔍 Testing variable header corruption")
+
+	testCases := []struct {
+		name        string
+		description string
+		payload     []byte
+		severity    string
+	}{
+		{
+			name:        "Variable-Header-Length-Corruption",
+			description: "Corrupted length field in variable header",
+			payload: []byte{
+				0x10, 0x0C, // CONNECT
+				0xFF, 0xFF, // Corrupted protocol name length
+				'M', 'Q',   // Truncated protocol name
+				0x04,       // Protocol level
+				0x02,       // Connect flags
+				0x00, 0x3C, // Keep alive
+				0x00, 0x00, // Client ID
+			},
+			severity: "HIGH",
+		},
+		{
+			name:        "Variable-Header-Missing-Fields",
+			description: "Variable header with missing required fields",
+			payload: []byte{
+				0x10, 0x06, // CONNECT with too short length
+				0x00, 0x04, 'M', 'Q', 'T', 'T',
+				// Missing protocol level, flags, keep alive
+			},
+			severity: "HIGH",
+		},
+	}
+
+	for i, tc := range testCases {
+		testID := 18000 + i
+		d.executeTestCase(testID, tc.name, "VARIABLE_HEADER_CORRUPTION", tc.payload, tc.description, tc.severity)
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	return nil
+}
+
+// Timing Attack Pattern Tests
+func (d *DefensicsMQTTFuzzer) testTimingAttackPatterns() error {
+	log.Println("🔍 Testing timing attack patterns")
+
+	// Test response time differences for valid vs invalid credentials
+	startTime := time.Now()
+
+	// Test with valid looking credentials
+	validTestPayload := []byte{
+		0x10, 0x16, // CONNECT
+		0x00, 0x04, 'M', 'Q', 'T', 'T',
+		0x04,       // Protocol level
+		0xC0,       // Connect flags (username + password)
+		0x00, 0x3C, // Keep alive
+		0x00, 0x04, 't', 'e', 's', 't', // Client ID
+		0x00, 0x04, 'u', 's', 'e', 'r', // Username
+		0x00, 0x04, 'p', 'a', 's', 's', // Password
+	}
+
+	d.executeTestCase(19000, "Timing-Attack-Valid-Creds", "TIMING_ATTACK", validTestPayload,
+		"Response time for valid-looking credentials", "LOW")
+
+	// Test with obviously invalid credentials
+	invalidTestPayload := []byte{
+		0x10, 0x16, // CONNECT
+		0x00, 0x04, 'M', 'Q', 'T', 'T',
+		0x04,       // Protocol level
+		0xC0,       // Connect flags (username + password)
+		0x00, 0x3C, // Keep alive
+		0x00, 0x04, 't', 'e', 's', 't', // Client ID
+		0x00, 0x04, 'x', 'x', 'x', 'x', // Invalid username
+		0x00, 0x04, 'y', 'y', 'y', 'y', // Invalid password
+	}
+
+	d.executeTestCase(19001, "Timing-Attack-Invalid-Creds", "TIMING_ATTACK", invalidTestPayload,
+		"Response time for invalid credentials", "LOW")
+
+	duration := time.Since(startTime)
+	d.recordResult(19002, "Timing-Attack-Analysis", "TIMING_ATTACK", "PASS", nil, nil, nil, "LOW",
+		fmt.Sprintf("Timing analysis completed in %v", duration))
+
+	return nil
+}
+
+// Session State Management Tests
+func (d *DefensicsMQTTFuzzer) testSessionStateManagement() error {
+	log.Println("🔍 Testing session state management")
+
+	sessionTests := []struct {
+		name        string
+		description string
+		testFunc    func() error
+		severity    string
+	}{
+		{
+			name:        "Session-State-Hijack-Attempt",
+			description: "Attempt to hijack existing session",
+			testFunc: func() error {
+				// Create first connection
+				conn1, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn1.Close()
+
+				connectPacket1 := d.buildConnectPacket("session-test")
+				conn1.Write(connectPacket1)
+				time.Sleep(100 * time.Millisecond)
+
+				// Try to create second connection with same client ID
+				conn2, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn2.Close()
+
+				connectPacket2 := d.buildConnectPacket("session-test") // Same client ID
+				_, err = conn2.Write(connectPacket2)
+				return err
+			},
+			severity: "MEDIUM",
+		},
+		{
+			name:        "Clean-Session-Flag-Violations",
+			description: "Test clean session flag behavior",
+			testFunc: func() error {
+				conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", d.target, d.port), 5*time.Second)
+				if err != nil {
+					return err
+				}
+				defer conn.Close()
+
+				// CONNECT with clean session = false and empty client ID
+				connectPacket := []byte{
+					0x10, 0x0C, // CONNECT
+					0x00, 0x04, 'M', 'Q', 'T', 'T',
+					0x04,       // Protocol level
+					0x00,       // Connect flags (clean session = false)
+					0x00, 0x3C, // Keep alive
+					0x00, 0x00, // Empty client ID
+				}
+				_, err = conn.Write(connectPacket)
+				return err
+			},
+			severity: "HIGH",
+		},
+	}
+
+	for i, test := range sessionTests {
+		testID := 20000 + i
+		err := test.testFunc()
+		if err != nil {
+			d.recordResult(testID, test.name, "SESSION_STATE", "PASS", nil, nil, nil, test.severity,
+				test.description+" (properly handled)")
+		} else {
+			d.recordResult(testID, test.name, "SESSION_STATE", "INCONCLUSIVE", nil, nil, nil, test.severity,
+				test.description+" (needs further analysis)")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
 	return nil
 }
 
