@@ -169,6 +169,8 @@ func setupMQTTClient(clientID string, t *testing.T) mqtt.Client {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(brokerURL)
 	opts.SetClientID(clientID)
+	opts.SetUsername("test")        // Use test user for authentication
+	opts.SetPassword("test")        // Use test password for authentication
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
 		t.Logf("Unexpected message: %s", msg.Payload())

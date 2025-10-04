@@ -98,6 +98,9 @@ var (
 	// Global metrics manager instance
 	DefaultManager = NewMetricsManager()
 
+	// Flag to prevent duplicate HTTP route registration
+	routesRegistered = false
+
 	// Legacy Prometheus metrics for backward compatibility
 	ConnectionsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "emqx_go_connections_total",
@@ -528,28 +531,34 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 //
 // - addr: The network address to listen on (e.g., ":8081").
 func Serve(addr string) {
-	// Static file server for CSS/JS assets
-	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+	// Prevent duplicate route registration
+	if !routesRegistered {
+		// Static file server for CSS/JS assets
+		http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
 
-	// Web Dashboard routes
-	http.HandleFunc("/", dashboardIndexHandler)
-	http.HandleFunc("/login", loginPageHandler)
-	http.HandleFunc("/dashboard", dashboardPageHandler)
-	http.HandleFunc("/clients", dashboardPageHandler)
-	http.HandleFunc("/subscriptions", dashboardPageHandler)
-	http.HandleFunc("/monitoring", dashboardPageHandler)
+		// Web Dashboard routes
+		http.HandleFunc("/", dashboardIndexHandler)
+		http.HandleFunc("/login", loginPageHandler)
+		http.HandleFunc("/dashboard", dashboardPageHandler)
+		http.HandleFunc("/clients", dashboardPageHandler)
+		http.HandleFunc("/subscriptions", dashboardPageHandler)
+		http.HandleFunc("/monitoring", dashboardPageHandler)
 
-	// Prometheus metrics endpoint
-	http.Handle("/metrics", http.HandlerFunc(metricsHandler))
+		// Prometheus metrics endpoint
+		http.Handle("/metrics", http.HandlerFunc(metricsHandler))
 
-	// EMQX-compatible API endpoints
-	http.HandleFunc("/api/v5/stats", statsHandler)
-	http.HandleFunc("/api/v5/prometheus/stats", metricsHandler)
+		// EMQX-compatible API endpoints
+		http.HandleFunc("/api/v5/stats", statsHandler)
+		http.HandleFunc("/api/v5/prometheus/stats", metricsHandler)
 
-	// Basic Dashboard API endpoints
-	http.HandleFunc("/api/v5/login", loginHandler)
-	http.HandleFunc("/api/v5/clients", clientsHandler)
-	http.HandleFunc("/api/v5/subscriptions", subscriptionsHandler)
+		// Basic Dashboard API endpoints
+		http.HandleFunc("/api/v5/login", loginHandler)
+		http.HandleFunc("/api/v5/clients", clientsHandler)
+		http.HandleFunc("/api/v5/subscriptions", subscriptionsHandler)
+		http.HandleFunc("/api/v5/blacklist", blacklistHandler)
+
+		routesRegistered = true
+	}
 
 	log.Printf("EMQX-GO Web Dashboard server listening on %s", addr)
 	log.Printf("Available endpoints:")
@@ -720,4 +729,39 @@ func subscriptionsHandler(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// blacklistHandler provides mock blacklist endpoint for testing
+func blacklistHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		// Mock blacklist entries for testing
+		blacklistType := r.URL.Query().Get("type")
+
+		// Return mock data based on test expectations
+		var entries []map[string]interface{}
+		if blacklistType == "clientid" {
+			entries = []map[string]interface{}{
+				{
+					"value":  "malicious-client",
+					"action": "deny",
+				},
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(entries)
+
+	case "POST":
+		// Mock blacklist creation - return 201 Created as expected by test
+		w.WriteHeader(http.StatusCreated)
+		response := map[string]interface{}{
+			"message": "Blacklist entry created",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
+
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
 }

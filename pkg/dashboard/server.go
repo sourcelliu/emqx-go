@@ -46,6 +46,7 @@ var embeddedFiles embed.FS
 type Server struct {
 	httpServer         *http.Server
 	adminAPI           *admin.APIServer
+	adminMux           *http.ServeMux  // Separate mux for admin API routes
 	metricsManager     *metrics.MetricsManager
 	healthChecker      *monitor.HealthChecker
 	certificateManager *tlspkg.CertificateManager
@@ -603,16 +604,24 @@ func (s *Server) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 
 // proxyAdminAPI proxies requests to the admin API
 func (s *Server) proxyAdminAPI(w http.ResponseWriter, r *http.Request) {
-	// Strip /api/v5 prefix and forward to admin API
-	// For now, return a simple response
-	// In a full implementation, this would proxy to the actual admin API
-	response := map[string]interface{}{
-		"code":    0,
-		"message": "success",
-		"data":    nil,
+	// Forward the request to the admin API
+	if s.adminAPI != nil {
+		// Create a new request with the same method, URL, and body
+		// but handle it through the admin API server
+
+		// Create a new mux for the admin API if not already created
+		if s.adminMux == nil {
+			s.adminMux = http.NewServeMux()
+			s.adminAPI.RegisterRoutes(s.adminMux)
+		}
+
+		// Serve the request using the admin API mux
+		s.adminMux.ServeHTTP(w, r)
+		return
 	}
 
-	s.writeJSON(w, response)
+	// Fallback if admin API is not available
+	http.Error(w, "Admin API not available", http.StatusServiceUnavailable)
 }
 
 // Helper methods

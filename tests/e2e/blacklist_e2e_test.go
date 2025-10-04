@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
@@ -34,10 +35,9 @@ import (
 )
 
 const (
-	blacklistTestBrokerPort    = ":1939"
-	blacklistTestDashboardPort = 18093
-	blacklistTestMetricsPort   = ":8100"
-	blacklistTestBaseURL       = "http://localhost:18093"
+	blacklistTestBrokerPortBase    = 1939
+	blacklistTestDashboardPortBase = 18093
+	blacklistTestMetricsPortBase   = 8100
 )
 
 // TestBlacklistE2EClientIDBlocking tests client ID blacklist functionality end-to-end
@@ -45,20 +45,26 @@ func TestBlacklistE2EClientIDBlocking(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Use unique ports for this test
+	brokerPort := fmt.Sprintf(":%d", blacklistTestBrokerPortBase)
+	dashboardPort := blacklistTestDashboardPortBase
+	metricsPort := fmt.Sprintf(":%d", blacklistTestMetricsPortBase)
+	baseURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
+
 	// Start broker with blacklist middleware
 	brokerInstance := broker.New("blacklist-e2e-broker", nil)
 	brokerInstance.SetupDefaultAuth()
 	defer brokerInstance.Close()
 
-	go brokerInstance.StartServer(ctx, blacklistTestBrokerPort)
+	go brokerInstance.StartServer(ctx, brokerPort)
 	time.Sleep(300 * time.Millisecond)
 
 	// Start test environment
-	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance)
+	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance, dashboardPort, metricsPort)
 	defer dashboardServer.Stop()
 
 	// Test 1: Normal client connection should work initially
-	normalClient := createBlacklistTestClient("good-client")
+	normalClient := createBlacklistTestClient("good-client", brokerPort)
 	token := normalClient.Connect()
 	require.True(t, token.WaitTimeout(5*time.Second), "Good client should connect initially")
 	require.NoError(t, token.Error())
@@ -76,13 +82,13 @@ func TestBlacklistE2EClientIDBlocking(t *testing.T) {
 	entryJSON, err := json.Marshal(blacklistEntry)
 	require.NoError(t, err)
 
-	resp, err := http.Post(blacklistTestBaseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
+	resp, err := http.Post(baseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Test 3: Blacklisted client should be blocked
-	blockedClient := createBlacklistTestClient("malicious-client")
+	blockedClient := createBlacklistTestClient("malicious-client", brokerPort)
 	token = blockedClient.Connect()
 
 	// Connection should fail or close immediately
@@ -98,24 +104,28 @@ func TestBlacklistE2EClientIDBlocking(t *testing.T) {
 	blockedClient.Disconnect(100)
 
 	// Test 4: Normal client should still work
-	normalClient2 := createBlacklistTestClient("another-good-client")
+	normalClient2 := createBlacklistTestClient("another-good-client", brokerPort)
 	token = normalClient2.Connect()
 	require.True(t, token.WaitTimeout(5*time.Second), "Good client should still connect")
 	require.NoError(t, token.Error())
 	normalClient2.Disconnect(100)
 
 	// Test 5: Verify blacklist entry via API
-	resp, err = http.Get(blacklistTestBaseURL + "/api/v5/blacklist?type=clientid")
+	resp, err = http.Get(baseURL + "/api/v5/blacklist?type=clientid")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
-	var entries []map[string]interface{}
-	err = json.NewDecoder(resp.Body).Decode(&entries)
+	var apiResponse struct {
+		Code int                      `json:"code"`
+		Data []map[string]interface{} `json:"data"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&apiResponse)
 	require.NoError(t, err)
-	assert.Len(t, entries, 1)
-	assert.Equal(t, "malicious-client", entries[0]["value"])
-	assert.Equal(t, "deny", entries[0]["action"])
+	assert.Equal(t, 0, apiResponse.Code)
+	require.Len(t, apiResponse.Data, 1, "Should have exactly 1 blacklist entry")
+	assert.Equal(t, "malicious-client", apiResponse.Data[0]["value"])
+	assert.Equal(t, "deny", apiResponse.Data[0]["action"])
 }
 
 // TestBlacklistE2EUsernameBlocking tests username blacklist functionality
@@ -123,16 +133,22 @@ func TestBlacklistE2EUsernameBlocking(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Use unique ports for this test
+	brokerPort := fmt.Sprintf(":%d", blacklistTestBrokerPortBase+1)
+	dashboardPort := blacklistTestDashboardPortBase + 1
+	metricsPort := fmt.Sprintf(":%d", blacklistTestMetricsPortBase+1)
+	baseURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
+
 	// Start broker
 	brokerInstance := broker.New("blacklist-username-broker", nil)
 	brokerInstance.SetupDefaultAuth()
 	defer brokerInstance.Close()
 
-	go brokerInstance.StartServer(ctx, ":1940")
+	go brokerInstance.StartServer(ctx, brokerPort)
 	time.Sleep(300 * time.Millisecond)
 
 	// Setup test environment
-	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance)
+	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance, dashboardPort, metricsPort)
 	defer dashboardServer.Stop()
 
 	// Add username to blacklist
@@ -147,14 +163,14 @@ func TestBlacklistE2EUsernameBlocking(t *testing.T) {
 	entryJSON, err := json.Marshal(blacklistEntry)
 	require.NoError(t, err)
 
-	resp, err := http.Post(blacklistTestBaseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
+	resp, err := http.Post(baseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Test blocked username
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker("tcp://localhost:1940")
+	opts.AddBroker("tcp://localhost" + brokerPort)
 	opts.SetClientID("username-test-client")
 	opts.SetUsername("baduser")
 	opts.SetPassword("test")
@@ -186,16 +202,22 @@ func TestBlacklistE2ETopicBlocking(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Use unique ports for this test
+	brokerPort := fmt.Sprintf(":%d", blacklistTestBrokerPortBase+2)
+	dashboardPort := blacklistTestDashboardPortBase + 2
+	metricsPort := fmt.Sprintf(":%d", blacklistTestMetricsPortBase+2)
+	baseURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
+
 	// Start broker
 	brokerInstance := broker.New("blacklist-topic-broker", nil)
 	brokerInstance.SetupDefaultAuth()
 	defer brokerInstance.Close()
 
-	go brokerInstance.StartServer(ctx, ":1941")
+	go brokerInstance.StartServer(ctx, brokerPort)
 	time.Sleep(300 * time.Millisecond)
 
 	// Setup test environment
-	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance)
+	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance, dashboardPort, metricsPort)
 	defer dashboardServer.Stop()
 
 	// Add topic to blacklist
@@ -210,14 +232,14 @@ func TestBlacklistE2ETopicBlocking(t *testing.T) {
 	entryJSON, err := json.Marshal(blacklistEntry)
 	require.NoError(t, err)
 
-	resp, err := http.Post(blacklistTestBaseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
+	resp, err := http.Post(baseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Create client
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker("tcp://localhost:1941")
+	opts.AddBroker("tcp://localhost" + brokerPort)
 	opts.SetClientID("topic-test-client")
 	opts.SetUsername("test")
 	opts.SetPassword("test")
@@ -254,16 +276,22 @@ func TestBlacklistE2EPatternBlocking(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Use unique ports for this test
+	brokerPort := fmt.Sprintf(":%d", blacklistTestBrokerPortBase+3)
+	dashboardPort := blacklistTestDashboardPortBase + 3
+	metricsPort := fmt.Sprintf(":%d", blacklistTestMetricsPortBase+3)
+	baseURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
+
 	// Start broker
 	brokerInstance := broker.New("blacklist-pattern-broker", nil)
 	brokerInstance.SetupDefaultAuth()
 	defer brokerInstance.Close()
 
-	go brokerInstance.StartServer(ctx, ":1942")
+	go brokerInstance.StartServer(ctx, brokerPort)
 	time.Sleep(300 * time.Millisecond)
 
 	// Setup test environment
-	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance)
+	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance, dashboardPort, metricsPort)
 	defer dashboardServer.Stop()
 
 	// Add pattern-based client ID blacklist
@@ -278,13 +306,13 @@ func TestBlacklistE2EPatternBlocking(t *testing.T) {
 	entryJSON, err := json.Marshal(blacklistEntry)
 	require.NoError(t, err)
 
-	resp, err := http.Post(blacklistTestBaseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
+	resp, err := http.Post(baseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Test client matching pattern should be blocked
-	blockedClient := createBlacklistTestClientWithID("bot_crawler", "test", "test")
+	blockedClient := createBlacklistTestClientWithID("bot_crawler", "test", "test", brokerPort)
 	token := blockedClient.Connect()
 
 	connected := token.WaitTimeout(5 * time.Second)
@@ -297,7 +325,7 @@ func TestBlacklistE2EPatternBlocking(t *testing.T) {
 	blockedClient.Disconnect(100)
 
 	// Test client not matching pattern should work
-	goodClient := createBlacklistTestClientWithID("legitimate_client", "test", "test")
+	goodClient := createBlacklistTestClientWithID("legitimate_client", "test", "test", brokerPort)
 	token = goodClient.Connect()
 	require.True(t, token.WaitTimeout(5*time.Second), "Non-pattern-matched client should connect")
 	require.NoError(t, token.Error())
@@ -309,16 +337,22 @@ func TestBlacklistE2ETemporaryBlocking(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Use unique ports for this test
+	brokerPort := fmt.Sprintf(":%d", blacklistTestBrokerPortBase+4)
+	dashboardPort := blacklistTestDashboardPortBase + 4
+	metricsPort := fmt.Sprintf(":%d", blacklistTestMetricsPortBase+4)
+	baseURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
+
 	// Start broker
 	brokerInstance := broker.New("blacklist-temp-broker", nil)
 	brokerInstance.SetupDefaultAuth()
 	defer brokerInstance.Close()
 
-	go brokerInstance.StartServer(ctx, ":1943")
+	go brokerInstance.StartServer(ctx, brokerPort)
 	time.Sleep(300 * time.Millisecond)
 
 	// Setup test environment
-	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance)
+	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance, dashboardPort, metricsPort)
 	defer dashboardServer.Stop()
 
 	// Add temporary blacklist entry (expires in 3 seconds)
@@ -335,13 +369,13 @@ func TestBlacklistE2ETemporaryBlocking(t *testing.T) {
 	entryJSON, err := json.Marshal(blacklistEntry)
 	require.NoError(t, err)
 
-	resp, err := http.Post(blacklistTestBaseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
+	resp, err := http.Post(baseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 	// Test client should be blocked initially
-	blockedClient := createBlacklistTestClientWithID("temp-blocked-client", "test", "test")
+	blockedClient := createBlacklistTestClientWithID("temp-blocked-client", "test", "test", brokerPort)
 	token := blockedClient.Connect()
 
 	connected := token.WaitTimeout(5 * time.Second)
@@ -355,7 +389,7 @@ func TestBlacklistE2ETemporaryBlocking(t *testing.T) {
 	time.Sleep(4 * time.Second)
 
 	// Test client should be able to connect after expiration
-	unblockedClient := createBlacklistTestClientWithID("temp-blocked-client", "test", "test")
+	unblockedClient := createBlacklistTestClientWithID("temp-blocked-client", "test", "test", brokerPort)
 	token = unblockedClient.Connect()
 	assert.True(t, token.WaitTimeout(5*time.Second), "Client should connect after blacklist expires")
 	if token.Error() != nil {
@@ -369,16 +403,22 @@ func TestBlacklistE2EAPI(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Use unique ports for this test
+	brokerPort := fmt.Sprintf(":%d", blacklistTestBrokerPortBase+5)
+	dashboardPort := blacklistTestDashboardPortBase + 5
+	metricsPort := fmt.Sprintf(":%d", blacklistTestMetricsPortBase+5)
+	baseURL := fmt.Sprintf("http://localhost:%d", dashboardPort)
+
 	// Start broker
 	brokerInstance := broker.New("blacklist-api-broker", nil)
 	brokerInstance.SetupDefaultAuth()
 	defer brokerInstance.Close()
 
-	go brokerInstance.StartServer(ctx, ":1944")
+	go brokerInstance.StartServer(ctx, brokerPort)
 	time.Sleep(300 * time.Millisecond)
 
 	// Setup test environment
-	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance)
+	dashboardServer := setupBlacklistTestEnvironment(t, ctx, brokerInstance, dashboardPort, metricsPort)
 	defer dashboardServer.Stop()
 
 	// Test 1: Create multiple blacklist entries
@@ -412,7 +452,7 @@ func TestBlacklistE2EAPI(t *testing.T) {
 		entryJSON, err := json.Marshal(entry)
 		require.NoError(t, err)
 
-		resp, err := http.Post(blacklistTestBaseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
+		resp, err := http.Post(baseURL+"/api/v5/blacklist", "application/json", bytes.NewBuffer(entryJSON))
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
@@ -428,7 +468,7 @@ func TestBlacklistE2EAPI(t *testing.T) {
 	}
 
 	// Test 2: List all entries
-	resp, err := http.Get(blacklistTestBaseURL + "/api/v5/blacklist")
+	resp, err := http.Get(baseURL + "/api/v5/blacklist")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -441,7 +481,7 @@ func TestBlacklistE2EAPI(t *testing.T) {
 	assert.Len(t, entriesList, 3)
 
 	// Test 3: Filter by type
-	resp, err = http.Get(blacklistTestBaseURL + "/api/v5/blacklist?type=clientid")
+	resp, err = http.Get(baseURL + "/api/v5/blacklist?type=clientid")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -454,7 +494,7 @@ func TestBlacklistE2EAPI(t *testing.T) {
 
 	// Test 4: Get specific entry
 	entryID := createdIDs[0]
-	resp, err = http.Get(blacklistTestBaseURL + "/api/v5/blacklist/" + entryID)
+	resp, err = http.Get(baseURL + "/api/v5/blacklist/" + entryID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -477,7 +517,7 @@ func TestBlacklistE2EAPI(t *testing.T) {
 	updateJSON, err := json.Marshal(updateData)
 	require.NoError(t, err)
 
-	req, err := http.NewRequest(http.MethodPut, blacklistTestBaseURL+"/api/v5/blacklist/"+entryID, bytes.NewBuffer(updateJSON))
+	req, err := http.NewRequest(http.MethodPut, baseURL+"/api/v5/blacklist/"+entryID, bytes.NewBuffer(updateJSON))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -488,7 +528,7 @@ func TestBlacklistE2EAPI(t *testing.T) {
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// Verify update
-	resp, err = http.Get(blacklistTestBaseURL + "/api/v5/blacklist/" + entryID)
+	resp, err = http.Get(baseURL + "/api/v5/blacklist/" + entryID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -500,7 +540,7 @@ func TestBlacklistE2EAPI(t *testing.T) {
 	assert.Equal(t, false, updatedEntry["enabled"])
 
 	// Test 6: Delete entry
-	req, err = http.NewRequest(http.MethodDelete, blacklistTestBaseURL+"/api/v5/blacklist/"+entryID, nil)
+	req, err = http.NewRequest(http.MethodDelete, baseURL+"/api/v5/blacklist/"+entryID, nil)
 	require.NoError(t, err)
 
 	resp, err = client.Do(req)
@@ -509,13 +549,13 @@ func TestBlacklistE2EAPI(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 
 	// Verify deletion
-	resp, err = http.Get(blacklistTestBaseURL + "/api/v5/blacklist/" + entryID)
+	resp, err = http.Get(baseURL + "/api/v5/blacklist/" + entryID)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 
 	// Test 7: Get blacklist statistics
-	resp, err = http.Get(blacklistTestBaseURL + "/api/v5/blacklist/stats")
+	resp, err = http.Get(baseURL + "/api/v5/blacklist/stats")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -530,9 +570,9 @@ func TestBlacklistE2EAPI(t *testing.T) {
 
 // Helper functions
 
-func setupBlacklistTestEnvironment(t *testing.T, ctx context.Context, brokerInstance *broker.Broker) *dashboard.Server {
+func setupBlacklistTestEnvironment(t *testing.T, ctx context.Context, brokerInstance *broker.Broker, dashboardPort int, metricsPort string) *dashboard.Server {
 	// Start metrics server
-	go metrics.Serve(blacklistTestMetricsPort)
+	go metrics.Serve(metricsPort)
 	time.Sleep(100 * time.Millisecond)
 
 	// Create dashboard components
@@ -564,7 +604,7 @@ func setupBlacklistTestEnvironment(t *testing.T, ctx context.Context, brokerInst
 	// Create dashboard server
 	config := &dashboard.Config{
 		Address:    "127.0.0.1",
-		Port:       blacklistTestDashboardPort,
+		Port:       dashboardPort,
 		Username:   "admin",
 		Password:   "public",
 		EnableAuth: false,
@@ -580,13 +620,13 @@ func setupBlacklistTestEnvironment(t *testing.T, ctx context.Context, brokerInst
 	return dashboardServer
 }
 
-func createBlacklistTestClient(clientID string) mqtt.Client {
-	return createBlacklistTestClientWithID(clientID, "test", "test")
+func createBlacklistTestClient(clientID string, brokerPort string) mqtt.Client {
+	return createBlacklistTestClientWithID(clientID, "test", "test", brokerPort)
 }
 
-func createBlacklistTestClientWithID(clientID, username, password string) mqtt.Client {
+func createBlacklistTestClientWithID(clientID, username, password, brokerPort string) mqtt.Client {
 	opts := mqtt.NewClientOptions()
-	opts.AddBroker("tcp://localhost" + blacklistTestBrokerPort)
+	opts.AddBroker("tcp://localhost" + brokerPort)
 	opts.SetClientID(clientID)
 	opts.SetUsername(username)
 	opts.SetPassword(password)
