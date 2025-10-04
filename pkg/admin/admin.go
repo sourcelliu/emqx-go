@@ -718,8 +718,11 @@ func (s *APIServer) handleBlacklistCreate(w http.ResponseWriter, r *http.Request
 		"metadata":    entry.Metadata,
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	s.writeSuccess(w, response)
+	apiResponse := APIResponse{
+		Code: 0,
+		Data: response,
+	}
+	s.writeJSON(w, http.StatusCreated, apiResponse)
 }
 
 // handleBlacklistByID handles /api/v5/blacklist/{id} endpoint

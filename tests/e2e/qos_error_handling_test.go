@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -18,7 +19,9 @@ func TestMQTTQoSErrorHandling(t *testing.T) {
 
 		opts := mqtt.NewClientOptions()
 		opts.AddBroker("tcp://localhost:1883")
-		opts.SetClientID("qos-error-test-valid")
+		opts.SetClientID(fmt.Sprintf("qos-error-test-valid-%d", qos))  // Use unique client ID
+		opts.SetUsername("test")        // Add authentication
+		opts.SetPassword("test")        // Add authentication
 		opts.SetConnectTimeout(5 * time.Second)
 		opts.SetKeepAlive(30 * time.Second)
 
@@ -34,6 +37,9 @@ func TestMQTTQoSErrorHandling(t *testing.T) {
 		})
 		require.True(t, subToken.Wait(), "Failed to subscribe with QoS %d", qos)
 		require.NoError(t, subToken.Error(), "Subscribe error for QoS %d", qos)
+
+		// Wait a bit for subscription to be established
+		time.Sleep(100 * time.Millisecond)
 
 		// Test publish with valid QoS
 		pubToken := client.Publish("test/qos/error/valid", qos, false, "Test message")
@@ -58,13 +64,23 @@ func TestMQTTQoSErrorHandling(t *testing.T) {
 
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker("tcp://localhost:1883")
-	opts.SetClientID("qos-resilience-test")
+	opts.SetUsername("test")        // Add authentication
+	opts.SetPassword("test")        // Add authentication
 	opts.SetConnectTimeout(5 * time.Second)
 	opts.SetKeepAlive(30 * time.Second)
 
 	// Test multiple rapid connections to ensure no resource leaks
 	for i := 0; i < 10; i++ {
-		client := mqtt.NewClient(opts)
+		// Use unique client ID for each connection
+		clientOpts := mqtt.NewClientOptions()
+		clientOpts.AddBroker("tcp://localhost:1883")
+		clientOpts.SetClientID(fmt.Sprintf("qos-resilience-test-%d", i))
+		clientOpts.SetUsername("test")
+		clientOpts.SetPassword("test")
+		clientOpts.SetConnectTimeout(5 * time.Second)
+		clientOpts.SetKeepAlive(30 * time.Second)
+
+		client := mqtt.NewClient(clientOpts)
 		token := client.Connect()
 		require.True(t, token.Wait(), "Failed to connect in resilience test %d", i+1)
 		require.NoError(t, token.Error(), "Connection error in resilience test %d", i+1)
@@ -74,6 +90,9 @@ func TestMQTTQoSErrorHandling(t *testing.T) {
 			t.Logf("Resilience test %d received: %s", i+1, string(msg.Payload()))
 		})
 		require.True(t, subToken.Wait(), "Failed to subscribe in resilience test %d", i+1)
+
+		// Wait a bit for subscription to be established
+		time.Sleep(50 * time.Millisecond)
 
 		pubToken := client.Publish("test/resilience", 1, false, "Resilience test")
 		require.True(t, pubToken.Wait(), "Failed to publish in resilience test %d", i+1)

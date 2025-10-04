@@ -1102,15 +1102,30 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			}
 
 			// SECURITY FIX: SUBSCRIBE must have at least one topic filter
+			// But handle QoS parse errors gracefully
 			if len(pk.Filters) == 0 {
-				log.Printf("[ERROR] SUBSCRIBE from client %s has no topic filters. Protocol violation.", clientID)
-				resp := packets.Packet{
-					FixedHeader: packets.FixedHeader{Type: packets.Suback},
-					PacketID:    pk.PacketID,
-					ReasonCodes: []byte{0x83}, // Topic filter invalid
+				// Check if this is a QoS parsing error (marked by special ReasonString)
+				if pk.Properties.ReasonString == "QoS_PARSE_ERROR" {
+					// This is a QoS parsing error, send appropriate response
+					log.Printf("[INFO] SUBSCRIBE from client %s contains invalid QoS values, sending SUBACK with failure codes.", clientID)
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Suback},
+						PacketID:    pk.PacketID,
+						ReasonCodes: []byte{0x80}, // Unspecified error for QoS issue
+					}
+					writePacket(conn, &resp)
+					continue // Continue processing, don't close connection
+				} else {
+					// This is a genuine empty filter list - protocol violation
+					log.Printf("[ERROR] SUBSCRIBE from client %s has no topic filters. Protocol violation.", clientID)
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Suback},
+						PacketID:    pk.PacketID,
+						ReasonCodes: []byte{0x83}, // Topic filter invalid
+					}
+					writePacket(conn, &resp)
+					return
 				}
-				writePacket(conn, &resp)
-				return
 			}
 
 			log.Printf("[DEBUG] Processing SUBSCRIBE for client %s with session mailbox: %p", clientID, sessionMailbox)
@@ -1118,16 +1133,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			var newRoutes []*clusterpb.Route
 			var reasonCodes []byte
 
-			// Check if we have empty filters (could be from QoS decode error recovery)
-			if len(pk.Filters) == 0 {
-				if pk.Properties.ReasonString == "Invalid QoS value in SUBSCRIBE packet" {
-					log.Printf("[INFO] Rejecting SUBSCRIBE from client %s due to invalid QoS value. MQTT spec requires QoS 0, 1, or 2.", clientID)
-				} else {
-					log.Printf("[WARN] Client %s sent SUBSCRIBE with no filters", clientID)
-				}
-				reasonCodes = append(reasonCodes, 0x81) // Implementation specific error for QoS violation
-			} else {
-
+			// Process each subscription filter
 			for i, sub := range pk.Filters {
 				log.Printf("[DEBUG] Processing subscription filter %d: Topic='%s', RequestedQoS=%d", i+1, sub.Filter, sub.Qos)
 
@@ -1228,7 +1234,6 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				reasonCodes = append(reasonCodes, grantedQoS)
 				log.Printf("[DEBUG] Added reason code: %d for subscription %d", grantedQoS, i+1)
 			}
-			} // Close the else block for non-empty filters
 
 			// Announce these new routes to peers
 			if b.cluster != nil {
@@ -2062,12 +2067,10 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 		err = pk.SubscribeDecode(buf)
 		// Handle QoS out of range errors gracefully for SUBSCRIBE packets
 		if err != nil && strings.Contains(err.Error(), "qos out of range") {
-			log.Printf("[WARN] Client sent SUBSCRIBE packet with invalid QoS value (must be 0, 1, or 2). Sending SUBACK with failure code.")
-			// Don't return error - we'll handle this at the packet processing level
-			// Create a minimal valid packet with empty filters to trigger proper error response
+			log.Printf("[INFO] SUBSCRIBE packet from client contains invalid QoS value (>2), will be rejected with proper SUBACK response.")
+			// Create a special marker for invalid QoS in SUBSCRIBE packets
 			pk.Filters = []packets.Subscription{}
-			// Mark this packet as having QoS error for better error messaging
-			pk.Properties.ReasonString = "Invalid QoS value in SUBSCRIBE packet"
+			pk.Properties.ReasonString = "QoS_PARSE_ERROR" // Special marker
 			err = nil
 		}
 	case packets.Unsubscribe:

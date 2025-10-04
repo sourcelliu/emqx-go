@@ -31,54 +31,159 @@ type Subscription struct {
 	QoS     byte
 }
 
+// SharedSubscription represents a subscription to a shared topic with group management.
+type SharedSubscription struct {
+	Group      string
+	Topic      string
+	Mailboxes  []*Subscription
+	NextIndex  int // For round-robin distribution
+}
+
 // Store provides a thread-safe, in-memory mapping of topic strings to lists of
 // subscriber mailboxes. It is the central component for tracking which clients
 // are subscribed to which topics.
 type Store struct {
-	subscriptions map[string][]*Subscription
-	mu            sync.RWMutex
+	subscriptions       map[string][]*Subscription
+	sharedSubscriptions map[string]*SharedSubscription // key: "group/topic"
+	mu                  sync.RWMutex
 }
 
 // NewStore creates and initializes a new, empty topic Store.
 func NewStore() *Store {
 	return &Store{
-		subscriptions: make(map[string][]*Subscription),
+		subscriptions:       make(map[string][]*Subscription),
+		sharedSubscriptions: make(map[string]*SharedSubscription),
 	}
 }
 
 // Subscribe adds a subscriber's mailbox to the list of subscribers for a given
 // topic with the specified QoS level. If the topic does not exist, it is created.
+// Supports MQTT shared subscriptions with $share/group/topic format.
 //
-// - topic: The topic string to subscribe to.
+// - topic: The topic string to subscribe to (may be shared subscription format).
 // - mailbox: The mailbox of the subscribing actor, which will receive the messages.
 // - qos: The QoS level for this subscription.
 func (s *Store) Subscribe(topic string, mailbox *actor.Mailbox, qos byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Check if this is a shared subscription ($share/group/topic)
+	if strings.HasPrefix(topic, "$share/") {
+		s.subscribeShared(topic, mailbox, qos)
+	} else {
+		// Regular subscription
+		sub := &Subscription{Mailbox: mailbox, QoS: qos}
+		s.subscriptions[topic] = append(s.subscriptions[topic], sub)
+	}
+}
+
+// subscribeShared handles shared subscription logic
+func (s *Store) subscribeShared(shareTopic string, mailbox *actor.Mailbox, qos byte) {
+	// Parse $share/group/topic format
+	parts := strings.SplitN(shareTopic, "/", 3)
+	if len(parts) != 3 {
+		// Invalid format, treat as regular subscription
+		sub := &Subscription{Mailbox: mailbox, QoS: qos}
+		s.subscriptions[shareTopic] = append(s.subscriptions[shareTopic], sub)
+		return
+	}
+
+	group := parts[1]
+	actualTopic := parts[2]
+	groupKey := group + "/" + actualTopic
+
+	// Create or get existing shared subscription
+	sharedSub, exists := s.sharedSubscriptions[groupKey]
+	if !exists {
+		sharedSub = &SharedSubscription{
+			Group:     group,
+			Topic:     actualTopic,
+			Mailboxes: []*Subscription{},
+			NextIndex: 0,
+		}
+		s.sharedSubscriptions[groupKey] = sharedSub
+	}
+
+	// Add subscriber to the group
 	sub := &Subscription{Mailbox: mailbox, QoS: qos}
-	s.subscriptions[topic] = append(s.subscriptions[topic], sub)
+	sharedSub.Mailboxes = append(sharedSub.Mailboxes, sub)
 }
 
 // Unsubscribe removes a subscriber's mailbox from a specific topic's
 // subscription list. If the mailbox is the last subscriber for that topic, the
-// topic entry is removed from the store.
+// topic entry is removed from the store. Supports shared subscriptions.
 //
 // - topic: The topic string to unsubscribe from.
 // - mailbox: The mailbox of the unsubscribing actor.
 func (s *Store) Unsubscribe(topic string, mailbox *actor.Mailbox) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if subscribers, ok := s.subscriptions[topic]; ok {
-		var newSubscribers []*Subscription
-		for _, sub := range subscribers {
-			if sub.Mailbox != mailbox {
-				newSubscribers = append(newSubscribers, sub)
+
+	// Check if this is a shared subscription
+	if strings.HasPrefix(topic, "$share/") {
+		s.unsubscribeShared(topic, mailbox)
+	} else {
+		// Regular unsubscribe
+		if subscribers, ok := s.subscriptions[topic]; ok {
+			var newSubscribers []*Subscription
+			for _, sub := range subscribers {
+				if sub.Mailbox != mailbox {
+					newSubscribers = append(newSubscribers, sub)
+				}
+			}
+			if len(newSubscribers) > 0 {
+				s.subscriptions[topic] = newSubscribers
+			} else {
+				delete(s.subscriptions, topic)
 			}
 		}
-		if len(newSubscribers) > 0 {
-			s.subscriptions[topic] = newSubscribers
+	}
+}
+
+// unsubscribeShared handles shared subscription unsubscribe logic
+func (s *Store) unsubscribeShared(shareTopic string, mailbox *actor.Mailbox) {
+	// Parse $share/group/topic format
+	parts := strings.SplitN(shareTopic, "/", 3)
+	if len(parts) != 3 {
+		// Invalid format, treat as regular unsubscription
+		if subscribers, ok := s.subscriptions[shareTopic]; ok {
+			var newSubscribers []*Subscription
+			for _, sub := range subscribers {
+				if sub.Mailbox != mailbox {
+					newSubscribers = append(newSubscribers, sub)
+				}
+			}
+			if len(newSubscribers) > 0 {
+				s.subscriptions[shareTopic] = newSubscribers
+			} else {
+				delete(s.subscriptions, shareTopic)
+			}
+		}
+		return
+	}
+
+	group := parts[1]
+	actualTopic := parts[2]
+	groupKey := group + "/" + actualTopic
+
+	// Remove from shared subscription
+	if sharedSub, exists := s.sharedSubscriptions[groupKey]; exists {
+		var newMailboxes []*Subscription
+		for _, sub := range sharedSub.Mailboxes {
+			if sub.Mailbox != mailbox {
+				newMailboxes = append(newMailboxes, sub)
+			}
+		}
+
+		if len(newMailboxes) > 0 {
+			sharedSub.Mailboxes = newMailboxes
+			// Reset index if it's out of bounds
+			if sharedSub.NextIndex >= len(newMailboxes) {
+				sharedSub.NextIndex = 0
+			}
 		} else {
-			delete(s.subscriptions, topic)
+			// No more subscribers, remove the shared subscription
+			delete(s.sharedSubscriptions, groupKey)
 		}
 	}
 }
@@ -102,10 +207,34 @@ func (s *Store) GetSubscribers(topic string) []*Subscription {
 		}
 	}
 
+	// Check shared subscriptions for this topic
+	sharedSubs := s.getSharedSubscribersForTopic(topic)
+	allSubs = append(allSubs, sharedSubs...)
+
 	// Return a copy to prevent race conditions
 	subsCopy := make([]*Subscription, len(allSubs))
 	copy(subsCopy, allSubs)
 	return subsCopy
+}
+
+// getSharedSubscribersForTopic returns subscribers from shared subscriptions
+// using round-robin distribution for load balancing
+func (s *Store) getSharedSubscribersForTopic(topic string) []*Subscription {
+	var selectedSubs []*Subscription
+
+	// Check all shared subscriptions to see if topic matches
+	for _, sharedSub := range s.sharedSubscriptions {
+		if matchesTopicFilter(topic, sharedSub.Topic) && len(sharedSub.Mailboxes) > 0 {
+			// Round-robin selection
+			selected := sharedSub.Mailboxes[sharedSub.NextIndex]
+			selectedSubs = append(selectedSubs, selected)
+
+			// Update next index for round-robin (with locking, we can modify safely)
+			sharedSub.NextIndex = (sharedSub.NextIndex + 1) % len(sharedSub.Mailboxes)
+		}
+	}
+
+	return selectedSubs
 }
 
 // matchesTopicFilter checks if a published topic matches a subscription topic filter.
