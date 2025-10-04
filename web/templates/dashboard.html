@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EMQX-GO Dashboard - Overview</title>
+    <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">EMQX-GO Dashboard</div>
+                <nav class="nav">
+                    <a href="/dashboard" class="active">Overview</a>
+                    <a href="/clients">Clients</a>
+                    <a href="/subscriptions">Subscriptions</a>
+                    <a href="/monitoring">Monitoring</a>
+                </nav>
+                <div class="user-menu">
+                    <span>Welcome, <strong id="username">admin</strong></span>
+                    <button id="logout-btn" class="btn btn-small">Logout</button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="main-content">
+        <div class="container">
+            <div class="page-header">
+                <h1 class="page-title">Dashboard Overview</h1>
+                <div class="page-actions">
+                    <label style="display: flex; align-items: center; gap: 8px; font-size: 14px;">
+                        <input type="checkbox" id="auto-refresh" checked> Auto Refresh (5s)
+                    </label>
+                    <button id="refresh-btn" class="btn btn-primary btn-small">Refresh</button>
+                    <span style="font-size: 12px; color: #8c8c8c;">
+                        Last updated: <span id="last-refresh-time">--:--:--</span>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Metrics Grid -->
+            <div class="dashboard-grid">
+                <!-- Active Connections -->
+                <div class="metric-card">
+                    <div class="metric-title">Active Connections</div>
+                    <div class="metric-value" id="connections-count">0</div>
+                    <div class="metric-change">
+                        Max: <span id="connections-max">0</span>
+                    </div>
+                </div>
+
+                <!-- Active Sessions -->
+                <div class="metric-card">
+                    <div class="metric-title">Active Sessions</div>
+                    <div class="metric-value" id="sessions-count">0</div>
+                    <div class="metric-change">
+                        Persistent: <span id="sessions-persistent">0</span> |
+                        Transient: <span id="sessions-transient">0</span>
+                    </div>
+                </div>
+
+                <!-- Subscriptions -->
+                <div class="metric-card">
+                    <div class="metric-title">Total Subscriptions</div>
+                    <div class="metric-value" id="subscriptions-count">0</div>
+                    <div class="metric-change">
+                        Max: <span id="subscriptions-max">0</span>
+                    </div>
+                </div>
+
+                <!-- Messages -->
+                <div class="metric-card">
+                    <div class="metric-title">Messages</div>
+                    <div class="metric-value" id="messages-received">0</div>
+                    <div class="metric-change">
+                        Received | Sent: <span id="messages-sent">0</span>
+                    </div>
+                </div>
+
+                <!-- QoS Distribution -->
+                <div class="metric-card">
+                    <div class="metric-title">QoS Distribution</div>
+                    <div style="display: flex; gap: 12px; align-items: center;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 600; color: #52c41a;" id="messages-qos0">0</div>
+                            <div style="font-size: 12px; color: #8c8c8c;">QoS 0</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 600; color: #1890ff;" id="messages-qos1">0</div>
+                            <div style="font-size: 12px; color: #8c8c8c;">QoS 1</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 16px; font-weight: 600; color: #fa8c16;" id="messages-qos2">0</div>
+                            <div style="font-size: 12px; color: #8c8c8c;">QoS 2</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- System Status -->
+                <div class="metric-card">
+                    <div class="metric-title">System Status</div>
+                    <div class="metric-value">
+                        <span class="metric-status online">Healthy</span>
+                    </div>
+                    <div class="metric-change">
+                        Uptime: <span id="node-uptime">0h 0m 0s</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Clients -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Recent Clients</h2>
+                </div>
+                <div class="card-content">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Username</th>
+                                    <th>Status</th>
+                                    <th>IP Address</th>
+                                    <th>Connected At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="clients-table-body">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; color: #8c8c8c; padding: 24px;">
+                                        Loading client data...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recent Subscriptions -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">Recent Subscriptions</h2>
+                </div>
+                <div class="card-content">
+                    <div class="table-container">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Client ID</th>
+                                    <th>Topic</th>
+                                    <th>QoS</th>
+                                    <th>NL</th>
+                                    <th>RAP</th>
+                                    <th>RH</th>
+                                </tr>
+                            </thead>
+                            <tbody id="subscriptions-table-body">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; color: #8c8c8c; padding: 24px;">
+                                        Loading subscription data...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Information -->
+            <div class="card">
+                <div class="card-header">
+                    <h2 class="card-title">System Information</h2>
+                </div>
+                <div class="card-content">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                        <div>
+                            <strong>Node ID:</strong> emqx-go-node
+                        </div>
+                        <div>
+                            <strong>Version:</strong> EMQX-GO v1.0.0
+                        </div>
+                        <div>
+                            <strong>MQTT Port:</strong> 1883
+                        </div>
+                        <div>
+                            <strong>HTTP Port:</strong> 8082
+                        </div>
+                        <div>
+                            <strong>gRPC Port:</strong> 8081
+                        </div>
+                        <div>
+                            <strong>Build:</strong> Development
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/static/js/dashboard.js"></script>
+
+    <style>
+        .badge-qos-0 { background: #f6ffed; color: #52c41a; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+        .badge-qos-1 { background: #e6f7ff; color: #1890ff; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+        .badge-qos-2 { background: #fff7e6; color: #fa8c16; padding: 2px 8px; border-radius: 12px; font-size: 12px; }
+    </style>
+</body>
+</html>

@@ -32,6 +32,7 @@ import (
 
 	"github.com/mochi-mqtt/server/v2/packets"
 	"github.com/turtacn/emqx-go/pkg/actor"
+	"github.com/turtacn/emqx-go/pkg/admin"
 	"github.com/turtacn/emqx-go/pkg/auth"
 	"github.com/turtacn/emqx-go/pkg/auth/x509"
 	"github.com/turtacn/emqx-go/pkg/blacklist"
@@ -2308,4 +2309,134 @@ func generateClientID() string {
 	timestamp := fmt.Sprintf("%d", time.Now().UnixNano())
 	random := fmt.Sprintf("%x", time.Now().UnixNano()%0xFFFF)
 	return fmt.Sprintf("auto-%s-%s", timestamp[len(timestamp)-8:], random)
+}
+
+// Admin API Interface Implementation
+
+// GetConnections returns current connection information
+func (b *Broker) GetConnections() []admin.ConnectionInfo {
+	// Return mock data for now - in production this would come from the session store
+	connections := []admin.ConnectionInfo{}
+
+	// Add mock connection data
+	connections = append(connections, admin.ConnectionInfo{
+		ClientID:       "test-client-1",
+		Username:       "test",
+		PeerHost:       "127.0.0.1",
+		SockPort:       1883,
+		Protocol:       "MQTT",
+		ConnectedAt:    time.Now().Add(-time.Hour),
+		KeepAlive:      60,
+		CleanStart:     true,
+		ProtoVer:       4,
+		SubscriptionsCount: 1,
+		Node:           b.nodeID,
+	})
+
+	return connections
+}
+
+// GetSessions returns current session information
+func (b *Broker) GetSessions() []admin.SessionInfo {
+	// Return mock data for now - in production this would come from the session store
+	sessions := []admin.SessionInfo{}
+
+	// Add mock session data
+	sessions = append(sessions, admin.SessionInfo{
+		ClientID:       "test-client-1",
+		Username:       "test",
+		CreatedAt:      time.Now().Add(-time.Hour),
+		ConnectedAt:    &[]time.Time{time.Now().Add(-time.Hour)}[0],
+		ExpiryInterval: 3600,
+		SubscriptionsCount: 1,
+		Node:           b.nodeID,
+	})
+
+	return sessions
+}
+
+// GetSubscriptions returns current subscription information
+func (b *Broker) GetSubscriptions() []admin.SubscriptionInfo {
+	// Return mock data for now - in production this would come from the topic store
+	subscriptions := []admin.SubscriptionInfo{}
+
+	// Add mock subscription data
+	subscriptions = append(subscriptions, admin.SubscriptionInfo{
+		ClientID: "test-client-1",
+		Topic:    "test/topic",
+		QoS:      1,
+		Node:     b.nodeID,
+	})
+
+	return subscriptions
+}
+
+// GetRoutes returns current routing information
+func (b *Broker) GetRoutes() []admin.RouteInfo {
+	// Return mock data for now - in production this would come from the cluster manager
+	routes := []admin.RouteInfo{}
+
+	// Add mock route data
+	routes = append(routes, admin.RouteInfo{
+		Topic: "test/topic",
+		Nodes: []string{b.nodeID},
+	})
+
+	return routes
+}
+
+// DisconnectClient disconnects a client by client ID
+func (b *Broker) DisconnectClient(clientID string) error {
+	// For now, return success - in production this would disconnect the actual client
+	log.Printf("[INFO] Disconnect request for client: %s", clientID)
+
+	// In a real implementation, we would:
+	// 1. Find the client session
+	// 2. Close the connection
+	// 3. Clean up resources
+
+	return nil
+}
+
+// KickoutSession kicks out a session by client ID
+func (b *Broker) KickoutSession(clientID string) error {
+	// For now, return success - in production this would kickout the actual session
+	log.Printf("[INFO] Kickout request for session: %s", clientID)
+
+	// In a real implementation, we would:
+	// 1. Find the session
+	// 2. Force disconnect
+	// 3. Clean up session state
+
+	return nil
+}
+
+// GetNodeInfo returns current node information
+func (b *Broker) GetNodeInfo() admin.NodeInfo {
+	uptime := time.Since(time.Now().Add(-time.Hour)) // Mock uptime
+
+	return admin.NodeInfo{
+		Node:       b.nodeID,
+		NodeStatus: "running",
+		OtpRelease: "Go 1.21",
+		Version:    "1.0.0",
+		Uptime:     int64(uptime.Seconds()),
+		Datetime:   time.Now(),
+		SysMon: admin.SysMonInfo{
+			ProcCount:    100,
+			ProcessLimit: 1000,
+			MemoryTotal:  1024 * 1024 * 1024, // 1GB
+			MemoryUsed:   512 * 1024 * 1024,  // 512MB
+			CPUIdle:      85.5,
+			CPULoad1:     0.5,
+			CPULoad5:     0.7,
+			CPULoad15:    0.3,
+		},
+	}
+}
+
+// GetClusterNodes returns information about all cluster nodes
+func (b *Broker) GetClusterNodes() []admin.NodeInfo {
+	// Return current node info - in production this would query the cluster
+	return []admin.NodeInfo{b.GetNodeInfo()}
 }
