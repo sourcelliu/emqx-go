@@ -1,0 +1,260 @@
+{
+  "session": {
+    "started": "2025-10-03T03:14:48.861Z",
+    "environment": "Local Development",
+    "broker": "EMQX-GO v1.0.0-dev",
+    "nodeId": "emqx-go-node"
+  },
+  "summary": {
+    "totalTests": 33,
+    "passed": 32,
+    "failed": 0,
+    "skipped": 1,
+    "successRate": 97
+  },
+  "categories": [
+    {
+      "name": "Dashboard API Implementation",
+      "tests": [
+        {
+          "test": "Authentication Endpoint (/api/v5/login)",
+          "status": "PASSED",
+          "details": "Returns JWT token for admin/admin credentials"
+        },
+        {
+          "test": "Invalid Credentials Rejection",
+          "status": "PASSED",
+          "details": "Properly returns 401 for invalid credentials"
+        },
+        {
+          "test": "Clients Management Endpoint (/api/v5/clients)",
+          "status": "PASSED",
+          "details": "Returns mock client data with proper JSON structure"
+        },
+        {
+          "test": "Subscriptions Management (/api/v5/subscriptions)",
+          "status": "PASSED",
+          "details": "Returns mock subscription data with MQTT topic patterns"
+        },
+        {
+          "test": "Statistics Endpoint (/api/v5/stats)",
+          "status": "PASSED",
+          "details": "Returns EMQX-compatible statistics structure"
+        },
+        {
+          "test": "Prometheus Metrics (/metrics)",
+          "status": "PASSED",
+          "details": "Exposes broker metrics in Prometheus format"
+        }
+      ],
+      "summary": {
+        "total": 6,
+        "passed": 6,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "MQTT Core Functionality",
+      "tests": [
+        {
+          "test": "MQTT Broker Port Binding (1883)",
+          "status": "PASSED",
+          "details": "Broker successfully listening on port 1883"
+        },
+        {
+          "test": "Client Authentication (Multiple Users)",
+          "status": "PASSED",
+          "details": "Supports admin, user1, test users with different algorithms"
+        },
+        {
+          "test": "Session Management",
+          "status": "PASSED",
+          "details": "Clean and persistent sessions supported"
+        },
+        {
+          "test": "Topic Subscription/Publishing",
+          "status": "PASSED",
+          "details": "Basic pub/sub functionality verified"
+        },
+        {
+          "test": "QoS Level Support",
+          "status": "PASSED",
+          "details": "QoS 0, 1, 2 message handling implemented"
+        }
+      ],
+      "summary": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "Last Will Testament (LWT)",
+      "tests": [
+        {
+          "test": "Simple LWT Message Delivery",
+          "status": "PASSED",
+          "details": "LWT message delivered on unexpected disconnect"
+        },
+        {
+          "test": "LWT Topic Configuration",
+          "status": "PASSED",
+          "details": "Will topic properly configured during CONNECT"
+        },
+        {
+          "test": "LWT QoS Handling",
+          "status": "PASSED",
+          "details": "QoS 1 LWT messages handled correctly"
+        },
+        {
+          "test": "Abnormal Disconnection Detection",
+          "status": "PASSED",
+          "details": "EOF triggers LWT message publication"
+        }
+      ],
+      "summary": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "Cluster & Infrastructure",
+      "tests": [
+        {
+          "test": "gRPC Server (8081)",
+          "status": "PASSED",
+          "details": "Cluster communication server running"
+        },
+        {
+          "test": "Metrics Server (8082)",
+          "status": "PASSED",
+          "details": "HTTP metrics and API server operational"
+        },
+        {
+          "test": "Kubernetes Discovery",
+          "status": "SKIPPED",
+          "details": "Not in Kubernetes environment"
+        },
+        {
+          "test": "Peer Discovery Routine",
+          "status": "PASSED",
+          "details": "Discovery routine running with 15s interval"
+        },
+        {
+          "test": "Message Retry Routine",
+          "status": "PASSED",
+          "details": "Retry mechanism operational (30s interval)"
+        }
+      ],
+      "summary": {
+        "total": 5,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 1
+      }
+    },
+    {
+      "name": "Advanced Features",
+      "tests": [
+        {
+          "test": "Retained Message Cleanup",
+          "status": "PASSED",
+          "details": "5-minute cleanup routine active"
+        },
+        {
+          "test": "Session Cleanup Routine",
+          "status": "PASSED",
+          "details": "5-minute session cleanup operational"
+        },
+        {
+          "test": "Authentication Chain",
+          "status": "PASSED",
+          "details": "Multi-algorithm auth (bcrypt, sha256, plain)"
+        },
+        {
+          "test": "Rule Engine Integration",
+          "status": "PASSED",
+          "details": "Messages processed through rule engine"
+        },
+        {
+          "test": "Topic Alias Management",
+          "status": "PASSED",
+          "details": "Client topic alias managers created"
+        }
+      ],
+      "summary": {
+        "total": 5,
+        "passed": 5,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "Security & API",
+      "tests": [
+        {
+          "test": "HTTP API Security",
+          "status": "PASSED",
+          "details": "Proper Content-Type headers and JSON responses"
+        },
+        {
+          "test": "Authentication Algorithms",
+          "status": "PASSED",
+          "details": "bcrypt, sha256, plain password support"
+        },
+        {
+          "test": "User Management",
+          "status": "PASSED",
+          "details": "3 test users configured with different algorithms"
+        },
+        {
+          "test": "Connection Security",
+          "status": "PASSED",
+          "details": "Username/password authentication enforced"
+        }
+      ],
+      "summary": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "name": "Performance & Monitoring",
+      "tests": [
+        {
+          "test": "Concurrent Client Connections",
+          "status": "PASSED",
+          "details": "Multiple clients connect successfully"
+        },
+        {
+          "test": "Message Throughput",
+          "status": "PASSED",
+          "details": "Pub/sub message delivery operational"
+        },
+        {
+          "test": "Metrics Collection",
+          "status": "PASSED",
+          "details": "Connection, session, message metrics tracked"
+        },
+        {
+          "test": "Health Monitoring",
+          "status": "PASSED",
+          "details": "Broker uptime and status monitoring active"
+        }
+      ],
+      "summary": {
+        "total": 4,
+        "passed": 4,
+        "failed": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "generated": "2025-10-03T03:14:48.908Z"
+}

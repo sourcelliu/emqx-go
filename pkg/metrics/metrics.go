@@ -20,8 +20,10 @@ package metrics
 
 import (
 	"encoding/json"
+	"html/template"
 	"log"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -522,10 +524,21 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 
 // Serve starts a new HTTP server in a blocking fashion to expose the defined
 // Prometheus metrics. The metrics are available at the "/metrics" endpoint.
-// Additionally provides EMQX-compatible API endpoints.
+// Additionally provides EMQX-compatible API endpoints and Web Dashboard.
 //
 // - addr: The network address to listen on (e.g., ":8081").
 func Serve(addr string) {
+	// Static file server for CSS/JS assets
+	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("web/static"))))
+
+	// Web Dashboard routes
+	http.HandleFunc("/", dashboardIndexHandler)
+	http.HandleFunc("/login", loginPageHandler)
+	http.HandleFunc("/dashboard", dashboardPageHandler)
+	http.HandleFunc("/clients", dashboardPageHandler)
+	http.HandleFunc("/subscriptions", dashboardPageHandler)
+	http.HandleFunc("/monitoring", dashboardPageHandler)
+
 	// Prometheus metrics endpoint
 	http.Handle("/metrics", http.HandlerFunc(metricsHandler))
 
@@ -533,11 +546,20 @@ func Serve(addr string) {
 	http.HandleFunc("/api/v5/stats", statsHandler)
 	http.HandleFunc("/api/v5/prometheus/stats", metricsHandler)
 
-	log.Printf("Metrics server listening on %s", addr)
+	// Basic Dashboard API endpoints
+	http.HandleFunc("/api/v5/login", loginHandler)
+	http.HandleFunc("/api/v5/clients", clientsHandler)
+	http.HandleFunc("/api/v5/subscriptions", subscriptionsHandler)
+
+	log.Printf("EMQX-GO Web Dashboard server listening on %s", addr)
 	log.Printf("Available endpoints:")
+	log.Printf("  - / (Dashboard Web Interface)")
 	log.Printf("  - /metrics (Prometheus format)")
 	log.Printf("  - /api/v5/stats (EMQX statistics)")
 	log.Printf("  - /api/v5/prometheus/stats (Prometheus format)")
+	log.Printf("  - /api/v5/login (Authentication)")
+	log.Printf("  - /api/v5/clients (Client management)")
+	log.Printf("  - /api/v5/subscriptions (Subscription management)")
 
 	if err := http.ListenAndServe(addr, nil); err != nil {
 		logFatalf("Metrics server failed: %v", err)
@@ -546,3 +568,156 @@ func Serve(addr string) {
 
 // logFatalf can be replaced by tests to prevent process exit.
 var logFatalf = log.Fatalf
+
+// Dashboard page handlers
+func dashboardIndexHandler(w http.ResponseWriter, r *http.Request) {
+	// Redirect root to dashboard
+	if r.URL.Path == "/" {
+		http.Redirect(w, r, "/dashboard", http.StatusTemporaryRedirect)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+func loginPageHandler(w http.ResponseWriter, r *http.Request) {
+	serveTemplate(w, "login.html", nil)
+}
+
+func dashboardPageHandler(w http.ResponseWriter, r *http.Request) {
+	serveTemplate(w, "dashboard.html", nil)
+}
+
+func serveTemplate(w http.ResponseWriter, templateName string, data interface{}) {
+	tmplPath := filepath.Join("web", "templates", templateName)
+	tmpl, err := template.ParseFiles(tmplPath)
+	if err != nil {
+		log.Printf("Template error: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.Execute(w, data); err != nil {
+		log.Printf("Template execution error: %v", err)
+	}
+}
+
+// loginHandler handles authentication requests
+func loginHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	// Simple authentication check
+	if req.Username == "admin" && req.Password == "admin" {
+		response := map[string]interface{}{
+			"status": 200,
+			"data": map[string]interface{}{
+				"token": "mock-jwt-token-12345",
+				"username": req.Username,
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		json.NewEncoder(w).Encode(response)
+	} else {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"status": 401,
+			"error": "Invalid credentials",
+		})
+	}
+}
+
+// clientsHandler handles client listing requests
+func clientsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Mock client data
+	clients := []map[string]interface{}{
+		{
+			"clientid": "test-client-1",
+			"username": "test",
+			"connected": true,
+			"ip_address": "127.0.0.1",
+			"port": 1883,
+			"connected_at": time.Now().Add(-5*time.Minute).Format(time.RFC3339),
+		},
+		{
+			"clientid": "test-client-2",
+			"username": "admin",
+			"connected": true,
+			"ip_address": "127.0.0.1",
+			"port": 1883,
+			"connected_at": time.Now().Add(-2*time.Minute).Format(time.RFC3339),
+		},
+	}
+
+	response := map[string]interface{}{
+		"data": clients,
+		"meta": map[string]interface{}{
+			"page": 1,
+			"limit": 100,
+			"count": len(clients),
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// subscriptionsHandler handles subscription listing requests
+func subscriptionsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Mock subscription data
+	subscriptions := []map[string]interface{}{
+		{
+			"clientid": "test-client-1",
+			"topic": "test/topic/+",
+			"qos": 1,
+			"nl": 0,
+			"rap": 0,
+			"rh": 0,
+		},
+		{
+			"clientid": "test-client-2",
+			"topic": "system/metrics",
+			"qos": 0,
+			"nl": 0,
+			"rap": 0,
+			"rh": 0,
+		},
+	}
+
+	response := map[string]interface{}{
+		"data": subscriptions,
+		"meta": map[string]interface{}{
+			"page": 1,
+			"limit": 100,
+			"count": len(subscriptions),
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}

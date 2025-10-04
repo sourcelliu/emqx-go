@@ -31,12 +31,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/turtacn/emqx-go/pkg/admin"
 	"github.com/turtacn/emqx-go/pkg/broker"
 	"github.com/turtacn/emqx-go/pkg/cluster"
 	"github.com/turtacn/emqx-go/pkg/config"
+	"github.com/turtacn/emqx-go/pkg/connector"
+	"github.com/turtacn/emqx-go/pkg/dashboard"
 	"github.com/turtacn/emqx-go/pkg/discovery"
+	"github.com/turtacn/emqx-go/pkg/integration"
 	"github.com/turtacn/emqx-go/pkg/metrics"
+	"github.com/turtacn/emqx-go/pkg/monitor"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
+	"github.com/turtacn/emqx-go/pkg/rules"
+	"github.com/turtacn/emqx-go/pkg/tls"
 	"google.golang.org/grpc"
 )
 
@@ -115,6 +122,46 @@ func main() {
 		log.Fatalf("Failed to configure authentication: %v", err)
 	}
 
+	// --- Initialize Advanced Components ---
+	// Metrics Manager
+	metricsManager := metrics.DefaultManager
+
+	// Health Checker
+	healthChecker := monitor.NewHealthChecker()
+
+	// Certificate Manager
+	certManager := tls.NewCertificateManager()
+
+	// Connector Manager
+	connectorManager := connector.NewConnectorManager()
+
+	// Rule Engine
+	ruleEngine := rules.NewRuleEngine(connectorManager)
+
+	// Data Integration Engine
+	integrationEngine := integration.NewDataIntegrationEngine()
+
+	// Admin API Server
+	adminAPI := admin.NewAPIServer(metricsManager, b)
+
+	// Dashboard Server
+	dashboardConfig := dashboard.DefaultConfig()
+	dashboardConfig.Port = 18083 // Use standard EMQX Dashboard port
+	dashboardServer, err := dashboard.NewServer(
+		dashboardConfig,
+		adminAPI,
+		metricsManager,
+		healthChecker,
+		certManager,
+		connectorManager,
+		ruleEngine,
+		integrationEngine,
+	)
+	if err != nil {
+		log.Fatalf("Failed to create dashboard server: %v", err)
+	}
+
+	// --- Start MQTT Broker ---
 	go func() {
 		if err := b.StartServer(ctx, cfg.Broker.MQTTPort); err != nil {
 			log.Fatalf("Broker server failed: %v", err)
@@ -140,6 +187,13 @@ func main() {
 
 	// --- Start Metrics Server ---
 	go metrics.Serve(cfg.Broker.MetricsPort)
+
+	// --- Start Dashboard Server ---
+	go func() {
+		if err := dashboardServer.Start(ctx); err != nil {
+			log.Printf("Dashboard server error: %v", err)
+		}
+	}()
 
 	// --- Start Discovery and Peer Connection ---
 	go startDiscovery(ctx, clusterMgr)
