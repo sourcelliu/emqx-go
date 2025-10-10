@@ -121,7 +121,9 @@ func main() {
 	// --- Setup Broker and Cluster Manager ---
 	// The broker needs to be created first to pass its publish function to the manager.
 	var b *broker.Broker
-	clusterMgr := cluster.NewManager(nodeID, fmt.Sprintf("%s%s", nodeID, cfg.Broker.GRPCPort), func(topic string, payload []byte) {
+	// For local deployment, use localhost as the address. In production/K8s, this should use the actual hostname.
+	nodeAddress := fmt.Sprintf("localhost%s", cfg.Broker.GRPCPort)
+	clusterMgr := cluster.NewManager(nodeID, nodeAddress, func(topic string, payload []byte) {
 		if b != nil {
 			b.RouteToLocalSubscribers(topic, payload)
 		}

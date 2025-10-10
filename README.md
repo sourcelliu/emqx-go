@@ -78,11 +78,49 @@ You can connect to the broker using any standard MQTT client.
 
 Once connected, you can subscribe to topics and publish messages to test the broker's functionality.
 
+### Testing Cluster Functionality
+
+EMQX-Go supports distributed clustering for high availability and load distribution. You can test the cluster functionality locally:
+
+**Quick Start - 3-Node Cluster**:
+
+```sh
+# Start a 3-node cluster
+./scripts/start-cluster.sh
+
+# Run the cluster test
+go run ./cmd/cluster-test/main.go
+
+# Stop the cluster
+./scripts/stop-cluster.sh
+```
+
+The test verifies cross-node message routing by:
+1. Connecting a subscriber to Node2 (port 1884)
+2. Connecting a publisher to Node1 (port 1883)
+3. Publishing a message from Node1 and verifying it reaches Node2's subscriber
+
+**Using Docker Compose**:
+
+```sh
+# Start cluster with Docker
+docker-compose -f docker-compose-cluster.yaml up -d
+
+# Stop cluster
+docker-compose -f docker-compose-cluster.yaml down
+```
+
+For detailed information about cluster testing, see:
+- [Cluster Testing Guide](./CLUSTER_TESTING_GUIDE.md) - How to deploy and test
+- [E2E Test Report](./CLUSTER_E2E_TEST_REPORT.md) - Detailed test results and bug fixes
+- [Quick Summary](./CLUSTER_TEST_SUMMARY.md) - Quick reference
+
 ## 🏗️ Project Structure
 
 The repository is organized into the following main directories:
 
 *   `cmd/emqx-go`: The main application entrypoint, responsible for initializing and orchestrating all services.
+*   `cmd/cluster-test`: Cluster testing tool for verifying cross-node message routing.
 *   `pkg/`: Contains all the core packages of the broker.
     *   `actor`: A lightweight, OTP-inspired actor model for concurrency.
     *   `broker`: The central MQTT broker logic, responsible for handling connections and orchestrating message flow.
@@ -95,6 +133,7 @@ The repository is organized into the following main directories:
     *   `storage`: A generic key-value store interface with an in-memory implementation for session management.
     *   `supervisor`: An OTP-style supervisor for managing actor lifecycles and implementing fault tolerance.
     *   `topic`: A thread-safe store for managing topic subscriptions and routing.
+*   `scripts/`: Utility scripts for cluster deployment and testing.
 *   `docs/`: Contains additional documentation on architecture and APIs.
 *   `k8s/`: Kubernetes manifests for deploying the application.
 
