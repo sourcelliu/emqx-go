@@ -1,0 +1,19 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: emqx-network-delay
+  namespace: default
+spec:
+  action: delay
+  mode: all
+  selector:
+    namespaces:
+      - default
+    labelSelectors:
+      app: emqx-go
+  delay:
+    latency: "250ms"
+    correlation: "50"
+    jitter: "100ms"
+  direction: both
+  duration: '5m'

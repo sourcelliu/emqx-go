@@ -1,0 +1,261 @@
+name: Chaos Testing
+
+on:
+  schedule:
+    # Run chaos tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      test_duration:
+        description: 'Test duration in minutes'
+        required: false
+        default: '5'
+      chaos_scenarios:
+        description: 'Comma-separated list of scenarios to run (or "all")'
+        required: false
+        default: 'all'
+
+env:
+  GO_VERSION: '1.21'
+  KUBERNETES_VERSION: 'v1.28.0'
+  CHAOS_MESH_VERSION: 'v2.6.0'
+
+jobs:
+  local-chaos-tests:
+    name: Local Chaos Tests (No K8s Required)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build EMQX-Go
+        run: |
+          go build -o bin/emqx-go ./cmd/emqx-go
+          go build -o bin/cluster-test ./cmd/cluster-test
+
+      - name: Run Local Chaos Tests
+        run: |
+          cd chaos
+          chmod +x local-chaos-test.sh
+          ./local-chaos-test.sh
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: local-chaos-test-results
+          path: chaos/local-chaos-results-*/
+          retention-days: 30
+
+      - name: Upload Test Report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: chaos-test-report
+          path: chaos/local-chaos-results-*/CHAOS_TEST_REPORT.md
+          retention-days: 30
+
+  kubernetes-chaos-tests:
+    name: Kubernetes Chaos Tests with Chaos Mesh
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Kind (Kubernetes in Docker)
+        uses: helm/kind-action@v1
+        with:
+          version: ${{ env.KUBERNETES_VERSION }}
+          cluster_name: emqx-chaos-test
+          config: |
+            kind: Cluster
+            apiVersion: kind.x-k8s.io/v1alpha4
+            nodes:
+            - role: control-plane
+            - role: worker
+            - role: worker
+            - role: worker
+
+      - name: Install Chaos Mesh
+        run: |
+          # Install Chaos Mesh using Helm
+          curl -sSL https://mirrors.chaos-mesh.org/v${{ env.CHAOS_MESH_VERSION }}/install.sh | bash -s -- --local kind
+
+      - name: Build and Push Docker Image
+        run: |
+          # Build Docker image for EMQX-Go
+          docker build -t emqx-go:test .
+
+          # Load image into Kind cluster
+          kind load docker-image emqx-go:test --name emqx-chaos-test
+
+      - name: Deploy EMQX-Go Cluster
+        run: |
+          # Apply Kubernetes manifests
+          kubectl apply -f deployments/k8s/
+
+          # Wait for pods to be ready
+          kubectl wait --for=condition=ready pod -l app=emqx-go --timeout=300s
+
+      - name: Verify Cluster Health
+        run: |
+          # Check all pods are running
+          kubectl get pods -l app=emqx-go
+
+          # Check cluster connectivity
+          POD_NAME=$(kubectl get pods -l app=emqx-go -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec $POD_NAME -- go run /app/cmd/cluster-test/main.go
+
+      - name: Run Chaos Mesh Tests
+        run: |
+          cd chaos
+          chmod +x run-all-tests.sh
+
+          # Run chaos tests with specified duration
+          DURATION=${{ github.event.inputs.test_duration || '5' }}
+          ./run-all-tests.sh --duration ${DURATION}m --scenarios "${{ github.event.inputs.chaos_scenarios || 'all' }}"
+
+      - name: Collect Chaos Test Results
+        if: always()
+        run: |
+          # Collect pod logs
+          mkdir -p chaos-results/logs
+          for pod in $(kubectl get pods -l app=emqx-go -o name); do
+            kubectl logs $pod > chaos-results/logs/${pod}.log
+          done
+
+          # Collect Chaos Mesh experiment status
+          kubectl get podchaos -o yaml > chaos-results/podchaos-status.yaml
+          kubectl get networkchaos -o yaml > chaos-results/networkchaos-status.yaml
+          kubectl get stresschaos -o yaml > chaos-results/stresschaos-status.yaml
+
+      - name: Upload Chaos Test Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: k8s-chaos-test-results
+          path: chaos-results/
+          retention-days: 30
+
+      - name: Generate Test Report
+        if: always()
+        run: |
+          # Generate comprehensive test report
+          cd chaos
+          cat > chaos-results/SUMMARY.md <<EOF
+          # Chaos Testing Summary
+
+          **Date**: $(date)
+          **Cluster**: Kind (Kubernetes ${{ env.KUBERNETES_VERSION }})
+          **Chaos Mesh Version**: ${{ env.CHAOS_MESH_VERSION }}
+          **Test Duration**: ${{ github.event.inputs.test_duration || '5' }} minutes
+          **Scenarios**: ${{ github.event.inputs.chaos_scenarios || 'all' }}
+
+          ## Test Execution
+
+          $(cat chaos-results/test-summary.txt || echo "No summary available")
+
+          ## Findings
+
+          $(grep -A 10 "FAILED\|ERROR" chaos-results/logs/*.log || echo "No critical errors found")
+
+          EOF
+
+      - name: Comment PR with Results
+        if: github.event_name == 'pull_request' && always()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('chaos-results/SUMMARY.md', 'utf8');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: summary
+            });
+
+  performance-baseline:
+    name: Performance Baseline Measurement
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build EMQX-Go
+        run: |
+          go build -o bin/emqx-go ./cmd/emqx-go
+          go build -o bin/cluster-test ./cmd/cluster-test
+
+      - name: Start Cluster
+        run: ./scripts/start-cluster.sh
+
+      - name: Measure Baseline Performance
+        run: |
+          # Run performance tests
+          echo "Running baseline performance tests..."
+
+          # Message throughput test
+          for i in {1..100}; do
+            ./bin/cluster-test -message "perf-test-$i" >> perf-results.txt
+          done
+
+          # Calculate metrics
+          AVG_LATENCY=$(grep "received in" perf-results.txt | awk '{sum+=$NF} END {print sum/NR}')
+          echo "Average latency: ${AVG_LATENCY}ms"
+
+          # Save baseline
+          cat > performance-baseline.json <<EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "average_latency_ms": ${AVG_LATENCY},
+            "test_count": 100,
+            "cluster_size": 3
+          }
+          EOF
+
+      - name: Stop Cluster
+        if: always()
+        run: ./scripts/stop-cluster.sh
+
+      - name: Upload Performance Baseline
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-baseline
+          path: performance-baseline.json
+          retention-days: 90
+
+  notify:
+    name: Notify Results
+    runs-on: ubuntu-latest
+    needs: [local-chaos-tests, kubernetes-chaos-tests, performance-baseline]
+    if: always()
+
+    steps:
+      - name: Send Notification
+        run: |
+          # This is a placeholder for notification logic
+          # You can integrate with Slack, Email, or other notification systems
+          echo "Chaos testing completed"
+          echo "Local tests: ${{ needs.local-chaos-tests.result }}"
+          echo "K8s tests: ${{ needs.kubernetes-chaos-tests.result }}"
+          echo "Performance: ${{ needs.performance-baseline.result }}"

@@ -27,6 +27,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -105,6 +106,9 @@ func main() {
 	if envMetricsPort := os.Getenv("METRICS_PORT"); envMetricsPort != "" {
 		cfg.Broker.MetricsPort = envMetricsPort
 	}
+	if envDashboardPort := os.Getenv("DASHBOARD_PORT"); envDashboardPort != "" {
+		cfg.Broker.DashboardPort = envDashboardPort
+	}
 
 	nodeID := cfg.Broker.NodeID
 	if nodeID == "" {
@@ -162,7 +166,22 @@ func main() {
 
 	// Dashboard Server
 	dashboardConfig := dashboard.DefaultConfig()
-	dashboardConfig.Port = 18083 // Use standard EMQX Dashboard port
+	// Use configured dashboard port, falling back to default if not set
+	dashboardPort := cfg.Broker.DashboardPort
+	if dashboardPort == "" {
+		dashboardPort = ":18083"
+	}
+	// Extract port number from string (remove leading colon if present)
+	if strings.HasPrefix(dashboardPort, ":") {
+		dashboardPort = dashboardPort[1:]
+	}
+	if port, err := strconv.Atoi(dashboardPort); err == nil {
+		dashboardConfig.Port = port
+	} else {
+		log.Printf("Invalid dashboard port %s, using default 18083", dashboardPort)
+		dashboardConfig.Port = 18083
+	}
+
 	dashboardServer, err := dashboard.NewServer(
 		dashboardConfig,
 		adminAPI,

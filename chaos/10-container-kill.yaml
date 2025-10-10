@@ -1,0 +1,17 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: emqx-container-kill
+  namespace: default
+spec:
+  action: container-kill
+  mode: fixed
+  value: '1'
+  selector:
+    namespaces:
+      - default
+    labelSelectors:
+      app: emqx-go
+  containerNames:
+    - emqx-go
+  duration: '30s'
