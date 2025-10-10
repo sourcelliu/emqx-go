@@ -1,0 +1,95 @@
+version: '3.8'
+
+services:
+  # Node 1
+  emqx-node1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emqx-node1
+    hostname: emqx-node1
+    environment:
+      - NODE_ID=node1
+      - MQTT_PORT=:1883
+      - GRPC_PORT=:8081
+      - METRICS_PORT=:8082
+    ports:
+      - "1883:1883"  # MQTT
+      - "8081:8081"  # gRPC
+      - "8082:8082"  # Metrics
+      - "18083:18083" # Dashboard
+    networks:
+      emqx_cluster:
+        ipv4_address: 172.20.0.11
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1883"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Node 2
+  emqx-node2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emqx-node2
+    hostname: emqx-node2
+    environment:
+      - NODE_ID=node2
+      - MQTT_PORT=:1883
+      - GRPC_PORT=:8081
+      - METRICS_PORT=:8082
+      - PEER_NODES=emqx-node1:8081
+    ports:
+      - "1884:1883"  # MQTT
+      - "8083:8081"  # gRPC
+      - "8084:8082"  # Metrics
+      - "18084:18083" # Dashboard
+    networks:
+      emqx_cluster:
+        ipv4_address: 172.20.0.12
+    depends_on:
+      - emqx-node1
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1883"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Node 3
+  emqx-node3:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: emqx-node3
+    hostname: emqx-node3
+    environment:
+      - NODE_ID=node3
+      - MQTT_PORT=:1883
+      - GRPC_PORT=:8081
+      - METRICS_PORT=:8082
+      - PEER_NODES=emqx-node1:8081,emqx-node2:8081
+    ports:
+      - "1885:1883"  # MQTT
+      - "8085:8081"  # gRPC
+      - "8086:8082"  # Metrics
+      - "18085:18083" # Dashboard
+    networks:
+      emqx_cluster:
+        ipv4_address: 172.20.0.13
+    depends_on:
+      - emqx-node1
+      - emqx-node2
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1883"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  emqx_cluster:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16

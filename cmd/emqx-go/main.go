@@ -92,6 +92,20 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
+	// Override config with environment variables if set
+	if envNodeID := os.Getenv("NODE_ID"); envNodeID != "" {
+		cfg.Broker.NodeID = envNodeID
+	}
+	if envMQTTPort := os.Getenv("MQTT_PORT"); envMQTTPort != "" {
+		cfg.Broker.MQTTPort = envMQTTPort
+	}
+	if envGRPCPort := os.Getenv("GRPC_PORT"); envGRPCPort != "" {
+		cfg.Broker.GRPCPort = envGRPCPort
+	}
+	if envMetricsPort := os.Getenv("METRICS_PORT"); envMetricsPort != "" {
+		cfg.Broker.MetricsPort = envMetricsPort
+	}
+
 	nodeID := cfg.Broker.NodeID
 	if nodeID == "" {
 		nodeID, _ = os.Hostname()
@@ -198,12 +212,65 @@ func main() {
 	// --- Start Discovery and Peer Connection ---
 	go startDiscovery(ctx, clusterMgr)
 
+	// --- Connect to static peer nodes if configured ---
+	if peerNodes := os.Getenv("PEER_NODES"); peerNodes != "" {
+		go connectToPeers(ctx, clusterMgr, peerNodes)
+	}
+
 	// --- Wait for Shutdown Signal ---
 	shutdownChan := make(chan os.Signal, 1)
 	signal.Notify(shutdownChan, os.Interrupt, syscall.SIGTERM)
 	<-shutdownChan
 
 	log.Println("Shutdown signal received. Shutting down...")
+}
+
+// connectToPeers connects to static peer nodes specified in PEER_NODES environment variable.
+// The format is: "host1:port1,host2:port2,..."
+//
+// - ctx: The main application context.
+// - mgr: The cluster manager to which peers will be added.
+// - peerNodes: Comma-separated list of peer addresses.
+func connectToPeers(ctx context.Context, mgr *cluster.Manager, peerNodes string) {
+	// Wait a bit for local server to start
+	time.Sleep(2 * time.Second)
+
+	peers := strings.Split(peerNodes, ",")
+	log.Printf("Attempting to connect to %d static peer nodes", len(peers))
+
+	for _, peerAddr := range peers {
+		peerAddr = strings.TrimSpace(peerAddr)
+		if peerAddr == "" {
+			continue
+		}
+
+		// Extract peer ID from address (use hostname as ID)
+		peerID := strings.Split(peerAddr, ":")[0]
+
+		log.Printf("Connecting to peer: %s at %s", peerID, peerAddr)
+		go mgr.AddPeer(ctx, peerID, peerAddr)
+	}
+
+	// Retry connection periodically
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Retry connecting to peers
+			for _, peerAddr := range peers {
+				peerAddr = strings.TrimSpace(peerAddr)
+				if peerAddr == "" {
+					continue
+				}
+				peerID := strings.Split(peerAddr, ":")[0]
+				go mgr.AddPeer(ctx, peerID, peerAddr)
+			}
+		}
+	}
 }
 
 // startDiscovery initializes and runs the peer discovery process. It is designed
