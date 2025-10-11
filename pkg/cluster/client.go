@@ -17,7 +17,9 @@ package cluster
 import (
 	"context"
 	"log"
+	"time"
 
+	"github.com/turtacn/emqx-go/pkg/chaos"
 	clusterpb "github.com/turtacn/emqx-go/pkg/proto/cluster"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -87,6 +89,17 @@ func (c *Client) Close() {
 // Returns the peer's response or an error.
 func (c *Client) Join(ctx context.Context, req *clusterpb.JoinRequest) (*clusterpb.JoinResponse, error) {
 	log.Printf("Sending Join request to peer")
+
+	// Chaos injection: network delay
+	chaos.ApplyNetworkDelay()
+
+	// Chaos injection: packet loss
+	if chaos.ShouldDropPacket() {
+		log.Printf("[CHAOS] Simulating packet drop for Join request")
+		time.Sleep(5 * time.Second) // Simulate timeout
+		return nil, context.DeadlineExceeded
+	}
+
 	return c.client.Join(ctx, req)
 }
 
@@ -97,6 +110,16 @@ func (c *Client) Join(ctx context.Context, req *clusterpb.JoinRequest) (*cluster
 //
 // Returns a response from the peer or an error.
 func (c *Client) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpdateRoutesRequest) (*clusterpb.BatchUpdateRoutesResponse, error) {
+	// Chaos injection: network delay
+	chaos.ApplyNetworkDelay()
+
+	// Chaos injection: packet loss
+	if chaos.ShouldDropPacket() {
+		log.Printf("[CHAOS] Simulating packet drop for BatchUpdateRoutes")
+		time.Sleep(2 * time.Second)
+		return nil, context.DeadlineExceeded
+	}
+
 	return c.client.BatchUpdateRoutes(ctx, req)
 }
 
@@ -108,5 +131,15 @@ func (c *Client) BatchUpdateRoutes(ctx context.Context, req *clusterpb.BatchUpda
 //
 // Returns an acknowledgment from the peer or an error.
 func (c *Client) ForwardPublish(ctx context.Context, req *clusterpb.PublishForward) (*clusterpb.ForwardAck, error) {
+	// Chaos injection: network delay
+	chaos.ApplyNetworkDelay()
+
+	// Chaos injection: packet loss
+	if chaos.ShouldDropPacket() {
+		log.Printf("[CHAOS] Simulating packet drop for ForwardPublish")
+		time.Sleep(1 * time.Second)
+		return nil, context.DeadlineExceeded
+	}
+
 	return c.client.ForwardPublish(ctx, req)
 }
