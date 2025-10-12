@@ -76,30 +76,30 @@ func TestBlacklistMiddleware_CheckClientConnection(t *testing.T) {
 	require.NoError(t, err)
 
 	testCases := []struct {
-		name         string
-		clientID     string
-		username     string
-		ipAddress    string
-		protocol     string
+		name          string
+		clientID      string
+		username      string
+		ipAddress     string
+		protocol      string
 		expectAllowed bool
-		expectReason string
+		expectReason  string
 	}{
 		{
-			name:         "allowed connection",
-			clientID:     "good-client",
-			username:     "gooduser",
-			ipAddress:    "192.168.1.10",
-			protocol:     "mqtt",
+			name:          "allowed connection",
+			clientID:      "good-client",
+			username:      "gooduser",
+			ipAddress:     "192.168.1.10",
+			protocol:      "mqtt",
 			expectAllowed: true,
 		},
 		{
-			name:         "blocked connection",
-			clientID:     "malicious-client",
-			username:     "gooduser",
-			ipAddress:    "192.168.1.10",
-			protocol:     "mqtt",
+			name:          "blocked connection",
+			clientID:      "malicious-client",
+			username:      "gooduser",
+			ipAddress:     "192.168.1.10",
+			protocol:      "mqtt",
 			expectAllowed: false,
-			expectReason: "Blocked by clientid blacklist: Suspicious activity",
+			expectReason:  "Blocked by clientid blacklist: Suspicious activity",
 		},
 	}
 
@@ -144,21 +144,21 @@ func TestBlacklistMiddleware_CheckTopicAccess(t *testing.T) {
 	require.NoError(t, err)
 
 	testCases := []struct {
-		name         string
-		topic        string
-		action       string
+		name          string
+		topic         string
+		action        string
 		expectAllowed bool
 	}{
 		{
-			name:         "allowed topic",
-			topic:        "sensor/temperature",
-			action:       "publish",
+			name:          "allowed topic",
+			topic:         "sensor/temperature",
+			action:        "publish",
 			expectAllowed: true,
 		},
 		{
-			name:         "blocked topic",
-			topic:        "forbidden/topic",
-			action:       "publish",
+			name:          "blocked topic",
+			topic:         "forbidden/topic",
+			action:        "publish",
 			expectAllowed: false,
 		},
 	}
@@ -358,7 +358,7 @@ func TestBlacklistMiddleware_UpdateConfig(t *testing.T) {
 		EnableUsernameCheck:  false,
 		EnableIPAddressCheck: false,
 		EnableTopicCheck:     false,
-		LogBlocks:           false,
+		LogBlocks:            false,
 	}
 
 	middleware.UpdateConfig(newConfig)

@@ -24,6 +24,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/turtacn/emqx-go/pkg/blacklist"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 )
 
@@ -166,6 +167,12 @@ func (m *mockBroker) GetNodeInfo() NodeInfo {
 
 func (m *mockBroker) GetClusterNodes() []NodeInfo {
 	return m.nodes
+}
+
+func (m *mockBroker) GetBlacklistMiddleware() *blacklist.BlacklistMiddleware {
+	// Return a new blacklist middleware for testing
+	manager := blacklist.NewBlacklistManager()
+	return blacklist.NewBlacklistMiddleware(manager, nil)
 }
 
 func TestNewAPIServer(t *testing.T) {

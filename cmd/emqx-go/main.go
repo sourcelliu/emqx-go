@@ -58,16 +58,16 @@ const (
 
 // main is the primary function that starts the EMQX-Go broker.
 // It follows these steps:
-// 1. Parses command line arguments and loads configuration.
-// 2. Sets up a unique node ID.
-// 3. Initializes the main context for graceful shutdown.
-// 4. Creates the cluster manager and the main broker, linking them together.
-// 5. Configures authentication from the configuration file.
-// 6. Starts the MQTT broker server in a goroutine.
-// 7. Starts the gRPC server for cluster communication in a goroutine.
-// 8. Starts the Prometheus metrics server in a goroutine.
-// 9. Starts the peer discovery process in a goroutine.
-// 10. Blocks and waits for a shutdown signal (SIGINT or SIGTERM) to gracefully
+//  1. Parses command line arguments and loads configuration.
+//  2. Sets up a unique node ID.
+//  3. Initializes the main context for graceful shutdown.
+//  4. Creates the cluster manager and the main broker, linking them together.
+//  5. Configures authentication from the configuration file.
+//  6. Starts the MQTT broker server in a goroutine.
+//  7. Starts the gRPC server for cluster communication in a goroutine.
+//  8. Starts the Prometheus metrics server in a goroutine.
+//  9. Starts the peer discovery process in a goroutine.
+//  10. Blocks and waits for a shutdown signal (SIGINT or SIGTERM) to gracefully
 //     terminate the application.
 func main() {
 	// Parse command line flags
@@ -302,9 +302,9 @@ func connectToPeers(ctx context.Context, mgr *cluster.Manager, peerNodes string)
 // The discovery process runs in a loop, periodically querying for peers and
 // attempting to add them to the cluster manager.
 //
-// - ctx: The main application context. The discovery loop will terminate when this
-//   context is canceled.
-// - mgr: The cluster manager to which discovered peers will be added.
+//   - ctx: The main application context. The discovery loop will terminate when this
+//     context is canceled.
+//   - mgr: The cluster manager to which discovered peers will be added.
 func startDiscovery(ctx context.Context, mgr *cluster.Manager) {
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {

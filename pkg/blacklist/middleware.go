@@ -36,10 +36,10 @@ type MiddlewareConfig struct {
 	EnableTopicCheck     bool `json:"enable_topic_check"`
 
 	// Behavior settings
-	LogBlocks        bool          `json:"log_blocks"`
-	BlockTimeout     time.Duration `json:"block_timeout"`     // Timeout for temporary blocks
-	CleanupInterval  time.Duration `json:"cleanup_interval"`  // Cleanup expired entries interval
-	MaxRecentBlocks  int           `json:"max_recent_blocks"` // Maximum recent blocks to keep
+	LogBlocks       bool          `json:"log_blocks"`
+	BlockTimeout    time.Duration `json:"block_timeout"`     // Timeout for temporary blocks
+	CleanupInterval time.Duration `json:"cleanup_interval"`  // Cleanup expired entries interval
+	MaxRecentBlocks int           `json:"max_recent_blocks"` // Maximum recent blocks to keep
 
 	// Default actions
 	DefaultAction       BlacklistAction `json:"default_action"`
@@ -53,12 +53,12 @@ func DefaultMiddlewareConfig() *MiddlewareConfig {
 		EnableUsernameCheck:  true,
 		EnableIPAddressCheck: true,
 		EnableTopicCheck:     true,
-		LogBlocks:           true,
-		BlockTimeout:        time.Hour * 24, // 24 hours default
-		CleanupInterval:     time.Hour,      // Cleanup every hour
-		MaxRecentBlocks:     1000,
-		DefaultAction:       ActionDeny,
-		UnknownClientAction: ActionLog,
+		LogBlocks:            true,
+		BlockTimeout:         time.Hour * 24, // 24 hours default
+		CleanupInterval:      time.Hour,      // Cleanup every hour
+		MaxRecentBlocks:      1000,
+		DefaultAction:        ActionDeny,
+		UnknownClientAction:  ActionLog,
 	}
 }
 
@@ -232,8 +232,7 @@ func (bm *BlacklistMiddleware) GetConfig() *MiddlewareConfig {
 
 // IsEnabled returns whether blacklist checking is enabled
 func (bm *BlacklistMiddleware) IsEnabled() bool {
-	return bm.manager != nil && (
-		bm.config.EnableClientIDCheck ||
+	return bm.manager != nil && (bm.config.EnableClientIDCheck ||
 		bm.config.EnableUsernameCheck ||
 		bm.config.EnableIPAddressCheck ||
 		bm.config.EnableTopicCheck)

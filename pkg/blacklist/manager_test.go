@@ -361,8 +361,8 @@ func TestBlacklistManager_CheckClientConnection(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name         string
-		clientInfo   ClientInfo
+		name          string
+		clientInfo    ClientInfo
 		expectAllowed bool
 	}{
 		{
@@ -451,8 +451,8 @@ func TestBlacklistManager_CheckClientPatterns(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name         string
-		clientInfo   ClientInfo
+		name          string
+		clientInfo    ClientInfo
 		expectAllowed bool
 	}{
 		{
@@ -523,8 +523,8 @@ func TestBlacklistManager_CheckTopicAccess(t *testing.T) {
 	}
 
 	testCases := []struct {
-		name         string
-		topicAccess  TopicAccess
+		name          string
+		topicAccess   TopicAccess
 		expectAllowed bool
 	}{
 		{

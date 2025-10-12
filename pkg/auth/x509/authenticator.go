@@ -73,11 +73,11 @@ func DefaultX509Config() *X509Config {
 
 // X509Authenticator implements certificate-based authentication
 type X509Authenticator struct {
-	config    *X509Config
-	certMgr   *tlspkg.CertificateManager
-	pattern   *regexp.Regexp
-	mu        sync.RWMutex
-	enabled   bool
+	config  *X509Config
+	certMgr *tlspkg.CertificateManager
+	pattern *regexp.Regexp
+	mu      sync.RWMutex
+	enabled bool
 }
 
 // NewX509Authenticator creates a new X.509 certificate authenticator

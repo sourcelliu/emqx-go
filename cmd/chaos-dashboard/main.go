@@ -11,34 +11,34 @@ import (
 )
 
 var (
-	port = flag.Int("port", 8888, "Dashboard server port")
+	port     = flag.Int("port", 8888, "Dashboard server port")
 	dataFile = flag.String("data", "", "Path to chaos results directory")
 )
 
 // MetricsData represents real-time chaos metrics
 type MetricsData struct {
-	Timestamp          time.Time              `json:"timestamp"`
-	ActiveScenario     string                 `json:"active_scenario"`
-	ClusterStatus      string                 `json:"cluster_status"`
-	TotalConnections   int                    `json:"total_connections"`
-	MessagesReceived   int64                  `json:"messages_received"`
-	MessagesSent       int64                  `json:"messages_sent"`
-	MessagesDropped    int64                  `json:"messages_dropped"`
-	SuccessRate        float64                `json:"success_rate"`
-	AverageLatency     float64                `json:"average_latency"`
-	P99Latency         float64                `json:"p99_latency"`
-	ActiveFaults       []string               `json:"active_faults"`
-	NodeMetrics        map[string]NodeMetrics `json:"node_metrics"`
+	Timestamp        time.Time              `json:"timestamp"`
+	ActiveScenario   string                 `json:"active_scenario"`
+	ClusterStatus    string                 `json:"cluster_status"`
+	TotalConnections int                    `json:"total_connections"`
+	MessagesReceived int64                  `json:"messages_received"`
+	MessagesSent     int64                  `json:"messages_sent"`
+	MessagesDropped  int64                  `json:"messages_dropped"`
+	SuccessRate      float64                `json:"success_rate"`
+	AverageLatency   float64                `json:"average_latency"`
+	P99Latency       float64                `json:"p99_latency"`
+	ActiveFaults     []string               `json:"active_faults"`
+	NodeMetrics      map[string]NodeMetrics `json:"node_metrics"`
 }
 
 // NodeMetrics represents per-node metrics
 type NodeMetrics struct {
-	NodeID      string  `json:"node_id"`
-	Connections int     `json:"connections"`
-	MessagesRx  int64   `json:"messages_rx"`
-	MessagesTx  int64   `json:"messages_tx"`
-	Status      string  `json:"status"`
-	Uptime      int64   `json:"uptime"`
+	NodeID      string `json:"node_id"`
+	Connections int    `json:"connections"`
+	MessagesRx  int64  `json:"messages_rx"`
+	MessagesTx  int64  `json:"messages_tx"`
+	Status      string `json:"status"`
+	Uptime      int64  `json:"uptime"`
 }
 
 // Dashboard manages the real-time dashboard

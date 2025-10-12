@@ -49,44 +49,44 @@ type BrokerInterface interface {
 
 // ConnectionInfo represents client connection information
 type ConnectionInfo struct {
-	ClientID         string            `json:"clientid"`
-	Username         string            `json:"username"`
-	PeerHost         string            `json:"peerhost"`
-	SockPort         int               `json:"sockport"`
-	Protocol         string            `json:"protocol"`
-	ConnectedAt      time.Time         `json:"connected_at"`
-	DisconnectedAt   *time.Time        `json:"disconnected_at,omitempty"`
-	KeepAlive        int               `json:"keepalive"`
-	CleanStart       bool              `json:"clean_start"`
-	ExpiryInterval   int               `json:"expiry_interval"`
-	ProtoVer         int               `json:"proto_ver"`
-	SubscriptionsCount int             `json:"subscriptions_count"`
-	MaxSubscriptions int               `json:"max_subscriptions"`
-	InflightCount    int               `json:"inflight_count"`
-	MaxInflight      int               `json:"max_inflight"`
-	MqueueCount      int               `json:"mqueue_count"`
-	MaxMqueue        int               `json:"max_mqueue"`
-	UserProperties   map[string]string `json:"user_properties,omitempty"`
-	Node             string            `json:"node"`
+	ClientID           string            `json:"clientid"`
+	Username           string            `json:"username"`
+	PeerHost           string            `json:"peerhost"`
+	SockPort           int               `json:"sockport"`
+	Protocol           string            `json:"protocol"`
+	ConnectedAt        time.Time         `json:"connected_at"`
+	DisconnectedAt     *time.Time        `json:"disconnected_at,omitempty"`
+	KeepAlive          int               `json:"keepalive"`
+	CleanStart         bool              `json:"clean_start"`
+	ExpiryInterval     int               `json:"expiry_interval"`
+	ProtoVer           int               `json:"proto_ver"`
+	SubscriptionsCount int               `json:"subscriptions_count"`
+	MaxSubscriptions   int               `json:"max_subscriptions"`
+	InflightCount      int               `json:"inflight_count"`
+	MaxInflight        int               `json:"max_inflight"`
+	MqueueCount        int               `json:"mqueue_count"`
+	MaxMqueue          int               `json:"max_mqueue"`
+	UserProperties     map[string]string `json:"user_properties,omitempty"`
+	Node               string            `json:"node"`
 }
 
 // SessionInfo represents session information
 type SessionInfo struct {
-	ClientID         string     `json:"clientid"`
-	Username         string     `json:"username"`
-	CreatedAt        time.Time  `json:"created_at"`
-	ConnectedAt      *time.Time `json:"connected_at,omitempty"`
-	DisconnectedAt   *time.Time `json:"disconnected_at,omitempty"`
-	ExpiryInterval   int        `json:"expiry_interval"`
-	MaxSubscriptions int        `json:"max_subscriptions"`
-	SubscriptionsCount int      `json:"subscriptions_count"`
-	MaxInflight      int        `json:"max_inflight"`
-	InflightCount    int        `json:"inflight_count"`
-	MaxMqueue        int        `json:"max_mqueue"`
-	MqueueCount      int        `json:"mqueue_count"`
-	MaxAwaitingRel   int        `json:"max_awaiting_rel"`
-	AwaitingRelCount int        `json:"awaiting_rel_count"`
-	Node             string     `json:"node"`
+	ClientID           string     `json:"clientid"`
+	Username           string     `json:"username"`
+	CreatedAt          time.Time  `json:"created_at"`
+	ConnectedAt        *time.Time `json:"connected_at,omitempty"`
+	DisconnectedAt     *time.Time `json:"disconnected_at,omitempty"`
+	ExpiryInterval     int        `json:"expiry_interval"`
+	MaxSubscriptions   int        `json:"max_subscriptions"`
+	SubscriptionsCount int        `json:"subscriptions_count"`
+	MaxInflight        int        `json:"max_inflight"`
+	InflightCount      int        `json:"inflight_count"`
+	MaxMqueue          int        `json:"max_mqueue"`
+	MqueueCount        int        `json:"mqueue_count"`
+	MaxAwaitingRel     int        `json:"max_awaiting_rel"`
+	AwaitingRelCount   int        `json:"awaiting_rel_count"`
+	Node               string     `json:"node"`
 }
 
 // SubscriptionInfo represents subscription information
@@ -105,25 +105,25 @@ type RouteInfo struct {
 
 // NodeInfo represents node information
 type NodeInfo struct {
-	Node      string    `json:"node"`
-	NodeStatus string   `json:"node_status"`
-	OtpRelease string   `json:"otp_release"`
-	Version   string    `json:"version"`
-	Uptime    int64     `json:"uptime"`
-	Datetime  time.Time `json:"datetime"`
-	SysMon    SysMonInfo `json:"sysMon"`
+	Node       string     `json:"node"`
+	NodeStatus string     `json:"node_status"`
+	OtpRelease string     `json:"otp_release"`
+	Version    string     `json:"version"`
+	Uptime     int64      `json:"uptime"`
+	Datetime   time.Time  `json:"datetime"`
+	SysMon     SysMonInfo `json:"sysMon"`
 }
 
 // SysMonInfo represents system monitoring information
 type SysMonInfo struct {
-	ProcCount   int64   `json:"procCount"`
-	ProcessLimit int64  `json:"processLimit"`
-	MemoryTotal int64   `json:"memoryTotal"`
-	MemoryUsed  int64   `json:"memoryUsed"`
-	CPUIdle     float64 `json:"cpuIdle"`
-	CPULoad1    float64 `json:"cpuLoad1"`
-	CPULoad5    float64 `json:"cpuLoad5"`
-	CPULoad15   float64 `json:"cpuLoad15"`
+	ProcCount    int64   `json:"procCount"`
+	ProcessLimit int64   `json:"processLimit"`
+	MemoryTotal  int64   `json:"memoryTotal"`
+	MemoryUsed   int64   `json:"memoryUsed"`
+	CPUIdle      float64 `json:"cpuIdle"`
+	CPULoad1     float64 `json:"cpuLoad1"`
+	CPULoad5     float64 `json:"cpuLoad5"`
+	CPULoad15    float64 `json:"cpuLoad15"`
 }
 
 // APIResponse represents a standard API response
@@ -219,8 +219,8 @@ func (s *APIServer) handleConnections(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result := struct {
-			Data  []ConnectionInfo `json:"data"`
-			Meta  PaginationMeta   `json:"meta"`
+			Data []ConnectionInfo `json:"data"`
+			Meta PaginationMeta   `json:"meta"`
 		}{
 			Data: connections[start:end],
 			Meta: PaginationMeta{
@@ -289,8 +289,8 @@ func (s *APIServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 
 		result := struct {
-			Data  []SessionInfo  `json:"data"`
-			Meta  PaginationMeta `json:"meta"`
+			Data []SessionInfo  `json:"data"`
+			Meta PaginationMeta `json:"meta"`
 		}{
 			Data: sessions[start:end],
 			Meta: PaginationMeta{
@@ -362,8 +362,8 @@ func (s *APIServer) handleSubscriptions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	result := struct {
-		Data  []SubscriptionInfo `json:"data"`
-		Meta  PaginationMeta     `json:"meta"`
+		Data []SubscriptionInfo `json:"data"`
+		Meta PaginationMeta     `json:"meta"`
 	}{
 		Data: subscriptions[start:end],
 		Meta: PaginationMeta{
@@ -423,8 +423,8 @@ func (s *APIServer) handleRoutes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := struct {
-		Data  []RouteInfo    `json:"data"`
-		Meta  PaginationMeta `json:"meta"`
+		Data []RouteInfo    `json:"data"`
+		Meta PaginationMeta `json:"meta"`
 	}{
 		Data: routes[start:end],
 		Meta: PaginationMeta{
@@ -506,9 +506,9 @@ func (s *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.metricsManager.GetStatistics()
 
 	status := map[string]interface{}{
-		"node":        nodeInfo,
-		"connections": stats.Connections,
-		"sessions":    stats.Sessions,
+		"node":          nodeInfo,
+		"connections":   stats.Connections,
+		"sessions":      stats.Sessions,
 		"subscriptions": stats.Subscriptions,
 	}
 

@@ -13,17 +13,17 @@ import (
 
 // TestConfig holds test configuration
 type TestConfig struct {
-	Node1Host         string
-	Node1Port         int
-	Node2Host         string
-	Node2Port         int
-	Username          string
-	Password          string
-	Topic             string
-	TestMessage       string
-	RouteWaitTime     time.Duration
-	DeliveryWaitTime  time.Duration
-	Verbose           bool
+	Node1Host        string
+	Node1Port        int
+	Node2Host        string
+	Node2Port        int
+	Username         string
+	Password         string
+	Topic            string
+	TestMessage      string
+	RouteWaitTime    time.Duration
+	DeliveryWaitTime time.Duration
+	Verbose          bool
 }
 
 // DefaultTestConfig returns default test configuration
