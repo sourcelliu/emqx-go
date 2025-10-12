@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="logo.png" alt="emqx-go Logo" width="200" height="200">
+  <img src="assets/images/logo.png" alt="emqx-go Logo" width="200" height="200">
 </p>
 
 <h1 align="center">emqx-go</h1>
