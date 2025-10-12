@@ -6,6 +6,43 @@
 
 ## 🎯 快速开始
 
+### 一键安装 (推荐) ⭐
+
+```bash
+# 运行自动安装脚本
+./setup-chaos.sh
+
+# 脚本会自动:
+# - 检查依赖项
+# - 构建所有二进制文件
+# - 配置脚本权限
+# - 创建目录结构
+```
+
+完整的快速开始教程请查看: **[QUICKSTART.md](./QUICKSTART.md)** ⭐
+
+### 使用统一CLI (推荐) ⭐
+
+```bash
+# 查看系统状态
+./bin/chaos-cli status
+
+# 运行单个测试
+./bin/chaos-cli test baseline -d 30
+
+# 运行所有测试
+./bin/chaos-cli test all -d 30
+
+# 启动监控面板
+./bin/chaos-cli dashboard
+
+# 运行Game Day
+./bin/chaos-cli gameday
+
+# 查看所有命令
+./bin/chaos-cli --help
+```
+
 ### 5分钟快速体验
 
 ```bash
@@ -23,22 +60,27 @@ cat chaos-test-report-*.md
 ### 10分钟完整测试
 
 ```bash
-# 运行所有场景
+# 方式1: 使用CLI (推荐)
+./bin/chaos-cli test all -d 30
+
+# 方式2: 使用脚本
 ./scripts/advanced-chaos-test.sh 30
 
 # 分析结果
 python3 scripts/analyze-chaos-results.py chaos-results-*
 ```
 
-### 实时监控 (新增)
+### 实时监控
 
 ```bash
-# 启动监控面板
+# 方式1: 使用CLI (推荐)
+./bin/chaos-cli dashboard
+
+# 方式2: 直接启动
 go build -o bin/chaos-dashboard ./cmd/chaos-dashboard
 ./bin/chaos-dashboard -port 8888
 
 # 访问: http://localhost:8888
-# 实时查看混沌测试指标
 ```
 
 ---
@@ -476,7 +518,14 @@ func TestWithChaos(t *testing.T) {
 
 ## 📅 更新日志
 
-### v4.0 (2025-10-12) - 最新版本 🎉
+### v5.0 (2025-10-12) - 最新版本 🚀
+- ✅ 统一CLI工具 (chaos-cli) - 一键管理所有功能
+- ✅ 自动化安装脚本 (setup-chaos.sh)
+- ✅ 快速开始指南 (QUICKSTART.md)
+- ✅ 简化的命令行界面
+- ✅ 结果管理功能 (list, clean)
+
+### v4.0 (2025-10-12) 🎉
 - ✅ HTML报告生成器 (交互式图表)
 - ✅ 基准对比工具 (性能回归检测)
 - ✅ Game Day自动化运行器
@@ -505,20 +554,21 @@ func TestWithChaos(t *testing.T) {
 
 ---
 
-**文档版本**: v4.0
+**文档版本**: v5.0
 **最后更新**: 2025-10-12
 **维护者**: EMQX-Go团队
 
-**总文档量**: 3,800+ 行
-**总代码量**: 3,200+ 行
+**总文档量**: 4,200+ 行
+**总代码量**: 3,800+ 行
 **测试场景**: 10个
-**工具数量**: 9个
+**工具数量**: 10个
 - 混沌注入框架
 - 测试编排工具
+- 统一CLI工具 (chaos-cli) - 新增 ⭐
 - 高级测试脚本
 - 结果分析工具
 - 健康检查脚本
 - 实时监控面板
-- HTML报告生成器 (新增)
-- 基准对比工具 (新增)
-- Game Day运行器 (新增)
+- HTML报告生成器
+- 基准对比工具
+- Game Day运行器
