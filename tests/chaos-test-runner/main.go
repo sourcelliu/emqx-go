@@ -119,13 +119,22 @@ func (h *ChaosTestHarness) ConnectMQTTClient(clientID string, port int) (mqtt.Cl
 	opts.SetClientID(clientID)
 	opts.SetCleanSession(true)
 	opts.SetAutoReconnect(true)
-	opts.SetConnectTimeout(5 * time.Second)
+	opts.SetConnectTimeout(10 * time.Second)
+	opts.SetKeepAlive(60 * time.Second)
+	opts.SetPingTimeout(10 * time.Second)
+	opts.SetMaxReconnectInterval(5 * time.Second)
 
 	client := mqtt.NewClient(opts)
 	token := client.Connect()
-	if token.WaitTimeout(5*time.Second) && token.Error() != nil {
+	if !token.WaitTimeout(10 * time.Second) {
+		return nil, fmt.Errorf("connection timeout")
+	}
+	if token.Error() != nil {
 		return nil, token.Error()
 	}
+
+	// Wait for connection to stabilize
+	time.Sleep(500 * time.Millisecond)
 
 	return client, nil
 }
@@ -289,6 +298,21 @@ func (h *ChaosTestHarness) GetScenarios() []TestScenario {
 
 	return []TestScenario{
 		{
+			Name:        "baseline",
+			Description: "Baseline test without any faults",
+			Duration:    testDuration,
+			Setup: func(i *chaos.Injector) error {
+				// No fault injection
+				return nil
+			},
+			Validate: func() error {
+				return nil
+			},
+			Cleanup: func(i *chaos.Injector) {
+				// Nothing to cleanup
+			},
+		},
+		{
 			Name:        "network-delay",
 			Description: "Inject 100ms network delay on all communication",
 			Duration:    testDuration,
@@ -299,6 +323,22 @@ func (h *ChaosTestHarness) GetScenarios() []TestScenario {
 			},
 			Validate: func() error {
 				// Cluster should still be functional
+				return nil
+			},
+			Cleanup: func(i *chaos.Injector) {
+				i.Disable()
+			},
+		},
+		{
+			Name:        "high-network-delay",
+			Description: "Inject 500ms network delay (high latency)",
+			Duration:    testDuration,
+			Setup: func(i *chaos.Injector) error {
+				i.Enable()
+				i.InjectNetworkDelay(500 * time.Millisecond)
+				return nil
+			},
+			Validate: func() error {
 				return nil
 			},
 			Cleanup: func(i *chaos.Injector) {
@@ -338,6 +378,23 @@ func (h *ChaosTestHarness) GetScenarios() []TestScenario {
 			},
 		},
 		{
+			Name:        "combined-network",
+			Description: "Inject 100ms delay + 10% packet loss",
+			Duration:    testDuration,
+			Setup: func(i *chaos.Injector) error {
+				i.Enable()
+				i.InjectNetworkDelay(100 * time.Millisecond)
+				i.InjectNetworkLoss(0.10)
+				return nil
+			},
+			Validate: func() error {
+				return nil
+			},
+			Cleanup: func(i *chaos.Injector) {
+				i.Disable()
+			},
+		},
+		{
 			Name:        "cpu-stress",
 			Description: "Inject 80% CPU stress",
 			Duration:    testDuration,
@@ -356,12 +413,50 @@ func (h *ChaosTestHarness) GetScenarios() []TestScenario {
 			},
 		},
 		{
+			Name:        "extreme-cpu-stress",
+			Description: "Inject 95% CPU stress (extreme load)",
+			Duration:    testDuration,
+			Setup: func(i *chaos.Injector) error {
+				i.Enable()
+				i.InjectCPUStress(95)
+				ctx := context.Background()
+				i.StartCPUStress(ctx)
+				return nil
+			},
+			Validate: func() error {
+				return nil
+			},
+			Cleanup: func(i *chaos.Injector) {
+				i.Disable()
+			},
+		},
+		{
 			Name:        "clock-skew",
 			Description: "Inject 5 second clock skew",
 			Duration:    testDuration,
 			Setup: func(i *chaos.Injector) error {
 				i.Enable()
 				i.InjectClockSkew(5 * time.Second)
+				return nil
+			},
+			Validate: func() error {
+				return nil
+			},
+			Cleanup: func(i *chaos.Injector) {
+				i.Disable()
+			},
+		},
+		{
+			Name:        "cascade-failure",
+			Description: "Inject multiple faults: 200ms delay + 15% loss + 70% CPU",
+			Duration:    testDuration,
+			Setup: func(i *chaos.Injector) error {
+				i.Enable()
+				i.InjectNetworkDelay(200 * time.Millisecond)
+				i.InjectNetworkLoss(0.15)
+				i.InjectCPUStress(70)
+				ctx := context.Background()
+				i.StartCPUStress(ctx)
 				return nil
 			},
 			Validate: func() error {
