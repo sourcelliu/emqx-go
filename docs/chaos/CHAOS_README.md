@@ -434,10 +434,10 @@ func TestWithChaos(t *testing.T) {
 
 ### 内部文档
 
-- [部署指南](./DEPLOYMENT.md)
-- [故障排查](./TROUBLESHOOTING.md)
-- [项目状态](./PROJECT_STATUS.md)
-- [主README](./README.md)
+- [部署指南](../guides/DEPLOYMENT.md)
+- [故障排查](../guides/TROUBLESHOOTING.md)
+- [项目状态](../reports/PROJECT_STATUS.md)
+- [主README](../../README.md)
 
 ### 外部资源
 
@@ -463,7 +463,7 @@ func TestWithChaos(t *testing.T) {
 
 ### Q: 测试失败了怎么办？
 
-**A**: 查看 [故障排查指南](./TROUBLESHOOTING.md) 或 [使用指南](./CHAOS_TESTING_GUIDE.md) 的故障排查章节。
+**A**: 查看 [故障排查指南](../guides/TROUBLESHOOTING.md) 或 [使用指南](./CHAOS_TESTING_GUIDE.md) 的故障排查章节。
 
 ### Q: 如何集成到CI/CD？
 
@@ -479,7 +479,7 @@ func TestWithChaos(t *testing.T) {
 
 ### 文档中找不到答案？
 
-1. 查看 [故障排查指南](./TROUBLESHOOTING.md)
+1. 查看 [故障排查指南](../guides/TROUBLESHOOTING.md)
 2. 查看 [使用指南的FAQ](./CHAOS_TESTING_GUIDE.md#故障排查)
 3. 提交 [GitHub Issue](https://github.com/your-org/emqx-go/issues)
 

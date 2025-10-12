@@ -111,9 +111,9 @@ docker-compose -f docker-compose-cluster.yaml down
 ```
 
 For detailed information about cluster testing, see:
-- [Cluster Testing Guide](./CLUSTER_TESTING_GUIDE.md) - How to deploy and test
-- [E2E Test Report](./CLUSTER_E2E_TEST_REPORT.md) - Detailed test results and bug fixes
-- [Quick Summary](./CLUSTER_TEST_SUMMARY.md) - Quick reference
+- [Cluster Testing Guide](docs/testing/CLUSTER_TESTING_GUIDE.md) - How to deploy and test
+- [E2E Test Report](docs/testing/CLUSTER_E2E_TEST_REPORT.md) - Detailed test results and bug fixes
+- [Quick Summary](docs/testing/CLUSTER_TEST_SUMMARY.md) - Quick reference
 
 ## 🏗️ Project Structure
 
@@ -138,6 +138,29 @@ The repository is organized into the following main directories:
 *   `k8s/`: Kubernetes manifests for deploying the application.
 
 ## 📚 Documentation
+
+**All documentation has been organized in the [docs/](docs/) directory.**
+
+### 📂 Quick Links
+
+- **📖 [Documentation Index](docs/README.md)** - Complete documentation navigation
+- **🔥 [Chaos Engineering](docs/chaos/CHAOS_README.md)** - Chaos testing system
+- **🚀 [Quick Start](docs/chaos/QUICKSTART.md)** - 5-minute chaos setup
+- **📖 [User Guides](docs/guides/)** - Deployment, configuration, troubleshooting
+- **🧪 [Testing Guides](docs/testing/)** - Cluster and E2E testing
+- **📊 [Reports](docs/reports/)** - Test reports and project status
+
+### 🎯 For Different Roles
+
+**New Users** → Start with [Quick Start Guide](docs/chaos/QUICKSTART.md)
+
+**Developers** → Read [Chaos Testing Guide](docs/chaos/CHAOS_TESTING_GUIDE.md)
+
+**Operators** → Check [Deployment Guide](docs/guides/DEPLOYMENT.md) and [Config Guide](docs/guides/CONFIG_GUIDE.md)
+
+**Testers** → Review [Testing Documentation](docs/testing/)
+
+### 📖 Code Documentation
 
 The source code is thoroughly documented using GoDoc conventions, providing detailed explanations for all public packages, types, and functions.
 
