@@ -187,7 +187,13 @@ func (ma *MemoryAuthenticator) Authenticate(username, password string) AuthResul
 		return AuthIgnore
 	}
 
-	// If username is empty, ignore authentication
+	// If username is empty but password is provided, reject (MQTT protocol violation)
+	if username == "" && password != "" {
+		log.Printf("[WARN] Empty username with non-empty password, rejecting authentication")
+		return AuthFailure
+	}
+
+	// If username is empty and no password, ignore authentication (allows anonymous)
 	if username == "" {
 		log.Printf("[DEBUG] Empty username provided, ignoring authentication")
 		return AuthIgnore
@@ -196,8 +202,10 @@ func (ma *MemoryAuthenticator) Authenticate(username, password string) AuthResul
 	// Check if user exists
 	user, exists := ma.users[username]
 	if !exists {
-		log.Printf("[DEBUG] User not found in memory authenticator: %s", username)
-		return AuthIgnore
+		// For non-existent users, return failure instead of ignore
+		// This ensures that invalid usernames are rejected, not skipped
+		log.Printf("[WARN] User not found in memory authenticator: %s", username)
+		return AuthFailure
 	}
 
 	// Check if user is enabled

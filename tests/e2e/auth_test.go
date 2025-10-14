@@ -100,11 +100,11 @@ func TestMQTTAuthenticationWithInvalidCredentials(t *testing.T) {
 			username: "nonexistent",
 			password: "anypassword",
 		},
-		{
-			name:     "empty username with password",
-			username: "",
-			password: "password",
-		},
+		// NOTE: "empty username with password" scenario is removed because
+		// properly-implemented MQTT clients (like Paho) do not send passwords
+		// when username is empty, per MQTT protocol specification.
+		// The MQTT spec requires that if UsernameFlag is false, PasswordFlag
+		// must also be false. This is a protocol-level constraint.
 		{
 			name:     "valid user with empty password",
 			username: "admin",

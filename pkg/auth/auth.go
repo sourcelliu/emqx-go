@@ -149,7 +149,16 @@ func (ac *AuthChain) Authenticate(username, password string) AuthResult {
 		}
 	}
 
-	log.Printf("[WARN] All authenticators skipped/ignored for user: %s, denying access", username)
+	// If all authenticators returned AuthIgnore:
+	// - Empty username with empty password: allow as anonymous
+	// - Empty username with non-empty password: reject (credentials mismatch)
+	// - Non-empty username not found: this case should be handled by returning AuthIgnore only for empty username
+	if username == "" && password == "" {
+		log.Printf("[INFO] All authenticators skipped/ignored for empty credentials, allowing anonymous connection")
+		return AuthSuccess
+	}
+
+	log.Printf("[WARN] All authenticators skipped/ignored for user: %s (password provided: %t), denying access", username, password != "")
 	return AuthFailure
 }
 

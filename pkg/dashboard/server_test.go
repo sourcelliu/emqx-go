@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/turtacn/emqx-go/pkg/admin"
+	"github.com/turtacn/emqx-go/pkg/blacklist"
 	"github.com/turtacn/emqx-go/pkg/metrics"
 	"github.com/turtacn/emqx-go/pkg/monitor"
 	tlspkg "github.com/turtacn/emqx-go/pkg/tls"
@@ -41,6 +42,11 @@ func (m *mockBrokerInterface) DisconnectClient(clientID string) error        { r
 func (m *mockBrokerInterface) KickoutSession(clientID string) error          { return nil }
 func (m *mockBrokerInterface) GetNodeInfo() admin.NodeInfo                   { return admin.NodeInfo{} }
 func (m *mockBrokerInterface) GetClusterNodes() []admin.NodeInfo             { return []admin.NodeInfo{} }
+func (m *mockBrokerInterface) GetBlacklistMiddleware() *blacklist.BlacklistMiddleware {
+	manager := blacklist.NewBlacklistManager()
+	return blacklist.NewBlacklistMiddleware(manager, nil)
+}
+
 
 func createTestServer(t *testing.T) *Server {
 	config := &Config{

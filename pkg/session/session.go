@@ -57,8 +57,9 @@ type Publish struct {
 type Session struct {
 	// ID is the unique identifier for the client session, typically the MQTT
 	// Client ID.
-	ID   string
-	conn io.Writer
+	ID              string
+	conn            io.Writer
+	protocolVersion byte // MQTT protocol version (3 for 3.1, 4 for 3.1.1, 5 for 5.0)
 
 	// Topic alias management for MQTT 5.0
 	mu                      sync.RWMutex
@@ -86,6 +87,23 @@ func (s *Session) SetTopicAliasMaximum(maximum uint16) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.topicAliasMaximum = maximum
+}
+
+// SetProtocolVersion sets the MQTT protocol version for this session
+func (s *Session) SetProtocolVersion(version byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.protocolVersion = version
+}
+
+// GetProtocolVersion returns the MQTT protocol version for this session
+func (s *Session) GetProtocolVersion() byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.protocolVersion == 0 {
+		return 4 // Default to MQTT 3.1.1
+	}
+	return s.protocolVersion
 }
 
 // GetTopicAliasMaximum returns the maximum topic alias value for this session
@@ -153,7 +171,7 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 				},
 				TopicName:       m.Topic,
 				Payload:         m.Payload,
-				ProtocolVersion: 5, // Enable MQTT 5.0 for topic aliases and user properties support
+				ProtocolVersion: s.GetProtocolVersion(), // Use client's actual protocol version
 			}
 
 			// Handle topic aliases for MQTT 5.0
@@ -224,7 +242,7 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 	}
 }
 
-// encodePublishPacket manually encodes a PUBLISH packet to fix payload format issues
+// encodePublishPacket manually encodes a PUBLISH packet with MQTT 5.0 properties support
 func (s *Session) encodePublishPacket(w io.Writer, pk *packets.Packet, qos byte) error {
 	// Fixed header
 	packetType := byte(3) // PUBLISH
@@ -249,6 +267,71 @@ func (s *Session) encodePublishPacket(w io.Writer, pk *packets.Packet, qos byte)
 		vh.WriteByte(byte(pk.PacketID & 0xFF))
 	}
 
+	// MQTT 5.0 Properties
+	var propsBuf bytes.Buffer
+	if pk.ProtocolVersion == 5 {
+		// Encode properties
+		// Property: Topic Alias (0x23)
+		if pk.Properties.TopicAliasFlag && pk.Properties.TopicAlias > 0 {
+			propsBuf.WriteByte(0x23) // Topic Alias identifier
+			propsBuf.WriteByte(byte(pk.Properties.TopicAlias >> 8))
+			propsBuf.WriteByte(byte(pk.Properties.TopicAlias & 0xFF))
+		}
+
+		// Property: Response Topic (0x08)
+		if pk.Properties.ResponseTopic != "" {
+			propsBuf.WriteByte(0x08) // Response Topic identifier
+			rtBytes := []byte(pk.Properties.ResponseTopic)
+			propsBuf.WriteByte(byte(len(rtBytes) >> 8))
+			propsBuf.WriteByte(byte(len(rtBytes) & 0xFF))
+			propsBuf.Write(rtBytes)
+		}
+
+		// Property: Correlation Data (0x09)
+		if len(pk.Properties.CorrelationData) > 0 {
+			propsBuf.WriteByte(0x09) // Correlation Data identifier
+			propsBuf.WriteByte(byte(len(pk.Properties.CorrelationData) >> 8))
+			propsBuf.WriteByte(byte(len(pk.Properties.CorrelationData) & 0xFF))
+			propsBuf.Write(pk.Properties.CorrelationData)
+		}
+
+		// Property: User Properties (0x26)
+		for _, userProp := range pk.Properties.User {
+			propsBuf.WriteByte(0x26) // User Property identifier
+			// Key
+			keyBytes := []byte(userProp.Key)
+			propsBuf.WriteByte(byte(len(keyBytes) >> 8))
+			propsBuf.WriteByte(byte(len(keyBytes) & 0xFF))
+			propsBuf.Write(keyBytes)
+			// Value
+			valBytes := []byte(userProp.Val)
+			propsBuf.WriteByte(byte(len(valBytes) >> 8))
+			propsBuf.WriteByte(byte(len(valBytes) & 0xFF))
+			propsBuf.Write(valBytes)
+		}
+
+		// Write properties length as variable byte integer
+		propsLen := propsBuf.Len()
+		if propsLen < 128 {
+			vh.WriteByte(byte(propsLen))
+		} else {
+			// Handle multi-byte variable length encoding
+			for propsLen > 0 {
+				b := byte(propsLen % 128)
+				propsLen = propsLen / 128
+				if propsLen > 0 {
+					b |= 0x80
+				}
+				vh.WriteByte(b)
+			}
+		}
+
+		// Write properties
+		vh.Write(propsBuf.Bytes())
+	} else {
+		// For MQTT 3.1.1, no properties section
+	}
+
 	// Calculate remaining length
 	remainingLength := vh.Len() + len(pk.Payload)
 
@@ -257,7 +340,7 @@ func (s *Session) encodePublishPacket(w io.Writer, pk *packets.Packet, qos byte)
 		return err
 	}
 
-	// Write remaining length (simplified for lengths < 128)
+	// Write remaining length as variable byte integer
 	if remainingLength < 128 {
 		if _, err := w.Write([]byte{byte(remainingLength)}); err != nil {
 			return err
@@ -276,7 +359,7 @@ func (s *Session) encodePublishPacket(w io.Writer, pk *packets.Packet, qos byte)
 		}
 	}
 
-	// Write variable header
+	// Write variable header (including properties for MQTT 5.0)
 	if _, err := w.Write(vh.Bytes()); err != nil {
 		return err
 	}

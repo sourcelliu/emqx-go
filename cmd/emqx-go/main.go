@@ -27,6 +27,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -57,16 +58,16 @@ const (
 
 // main is the primary function that starts the EMQX-Go broker.
 // It follows these steps:
-// 1. Parses command line arguments and loads configuration.
-// 2. Sets up a unique node ID.
-// 3. Initializes the main context for graceful shutdown.
-// 4. Creates the cluster manager and the main broker, linking them together.
-// 5. Configures authentication from the configuration file.
-// 6. Starts the MQTT broker server in a goroutine.
-// 7. Starts the gRPC server for cluster communication in a goroutine.
-// 8. Starts the Prometheus metrics server in a goroutine.
-// 9. Starts the peer discovery process in a goroutine.
-// 10. Blocks and waits for a shutdown signal (SIGINT or SIGTERM) to gracefully
+//  1. Parses command line arguments and loads configuration.
+//  2. Sets up a unique node ID.
+//  3. Initializes the main context for graceful shutdown.
+//  4. Creates the cluster manager and the main broker, linking them together.
+//  5. Configures authentication from the configuration file.
+//  6. Starts the MQTT broker server in a goroutine.
+//  7. Starts the gRPC server for cluster communication in a goroutine.
+//  8. Starts the Prometheus metrics server in a goroutine.
+//  9. Starts the peer discovery process in a goroutine.
+//  10. Blocks and waits for a shutdown signal (SIGINT or SIGTERM) to gracefully
 //     terminate the application.
 func main() {
 	// Parse command line flags
@@ -105,6 +106,9 @@ func main() {
 	if envMetricsPort := os.Getenv("METRICS_PORT"); envMetricsPort != "" {
 		cfg.Broker.MetricsPort = envMetricsPort
 	}
+	if envDashboardPort := os.Getenv("DASHBOARD_PORT"); envDashboardPort != "" {
+		cfg.Broker.DashboardPort = envDashboardPort
+	}
 
 	nodeID := cfg.Broker.NodeID
 	if nodeID == "" {
@@ -121,7 +125,9 @@ func main() {
 	// --- Setup Broker and Cluster Manager ---
 	// The broker needs to be created first to pass its publish function to the manager.
 	var b *broker.Broker
-	clusterMgr := cluster.NewManager(nodeID, fmt.Sprintf("%s%s", nodeID, cfg.Broker.GRPCPort), func(topic string, payload []byte) {
+	// For local deployment, use localhost as the address. In production/K8s, this should use the actual hostname.
+	nodeAddress := fmt.Sprintf("localhost%s", cfg.Broker.GRPCPort)
+	clusterMgr := cluster.NewManager(nodeID, nodeAddress, func(topic string, payload []byte) {
 		if b != nil {
 			b.RouteToLocalSubscribers(topic, payload)
 		}
@@ -160,7 +166,22 @@ func main() {
 
 	// Dashboard Server
 	dashboardConfig := dashboard.DefaultConfig()
-	dashboardConfig.Port = 18083 // Use standard EMQX Dashboard port
+	// Use configured dashboard port, falling back to default if not set
+	dashboardPort := cfg.Broker.DashboardPort
+	if dashboardPort == "" {
+		dashboardPort = ":18083"
+	}
+	// Extract port number from string (remove leading colon if present)
+	if strings.HasPrefix(dashboardPort, ":") {
+		dashboardPort = dashboardPort[1:]
+	}
+	if port, err := strconv.Atoi(dashboardPort); err == nil {
+		dashboardConfig.Port = port
+	} else {
+		log.Printf("Invalid dashboard port %s, using default 18083", dashboardPort)
+		dashboardConfig.Port = 18083
+	}
+
 	dashboardServer, err := dashboard.NewServer(
 		dashboardConfig,
 		adminAPI,
@@ -281,9 +302,9 @@ func connectToPeers(ctx context.Context, mgr *cluster.Manager, peerNodes string)
 // The discovery process runs in a loop, periodically querying for peers and
 // attempting to add them to the cluster manager.
 //
-// - ctx: The main application context. The discovery loop will terminate when this
-//   context is canceled.
-// - mgr: The cluster manager to which discovered peers will be added.
+//   - ctx: The main application context. The discovery loop will terminate when this
+//     context is canceled.
+//   - mgr: The cluster manager to which discovered peers will be added.
 func startDiscovery(ctx context.Context, mgr *cluster.Manager) {
 	namespace := os.Getenv("POD_NAMESPACE")
 	if namespace == "" {

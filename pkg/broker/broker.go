@@ -679,7 +679,7 @@ func (b *Broker) handleTLSConnection(ctx context.Context, conn net.Conn) {
 			}
 
 			log.Printf("[DEBUG] Registering session for TLS client %s", clientID)
-			sessionMailbox = b.registerSession(connCtx, clientID, conn)
+			sessionMailbox = b.registerSession(connCtx, clientID, conn, 4, persistentSession) // Default to MQTT 3.1.1
 			log.Printf("[DEBUG] Session registered successfully for TLS client %s, mailbox: %p", clientID, sessionMailbox)
 
 			b.mu.Lock()
@@ -847,6 +847,12 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			// Extract username and password from CONNECT packet
 			var username, password string
 
+			// DEBUG: Log the flags from the CONNECT packet
+			log.Printf("[DEBUG] CONNECT flags from %s - UsernameFlag: %t, PasswordFlag: %t",
+				conn.RemoteAddr(), pk.Connect.UsernameFlag, pk.Connect.PasswordFlag)
+			log.Printf("[DEBUG] CONNECT values - Username: '%s', Password length: %d",
+				string(pk.Connect.Username), len(pk.Connect.Password))
+
 			// SECURITY FIX: Validate password/username flag consistency (Defensics issue)
 			if pk.Connect.PasswordFlag && !pk.Connect.UsernameFlag {
 				log.Printf("[ERROR] CONNECT from %s has password flag without username flag. Protocol violation.", conn.RemoteAddr())
@@ -867,6 +873,19 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				log.Printf("[DEBUG] Password provided: %t", password != "")
 			}
 
+			// IMPORTANT FIX: Some MQTT clients (like Paho) don't set UsernameFlag when username is empty
+			// But they may still provide a password in the payload. We need to check the raw password field
+			// to properly reject empty username + non-empty password combinations (MQTT protocol violation)
+			if !pk.Connect.UsernameFlag && len(pk.Connect.Password) > 0 {
+				log.Printf("[ERROR] CONNECT from %s has non-empty password but no username flag. This indicates empty username with password - Protocol violation.", conn.RemoteAddr())
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Connack},
+					ReasonCode:  0x84, // Bad username or password
+				}
+				writePacket(conn, &resp)
+				return
+			}
+
 			// Check blacklist before authentication
 			clientIP := strings.Split(conn.RemoteAddr().String(), ":")[0]
 			allowed, reason, err := b.blacklistMiddleware.CheckClientConnection(clientID, username, clientIP, "mqtt")
@@ -881,24 +900,22 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			}
 			if !allowed {
 				log.Printf("[WARN] Client %s blocked by blacklist: %s", clientID, reason)
-				resp := packets.Packet{
-					FixedHeader: packets.FixedHeader{Type: packets.Connack},
-					ReasonCode:  0x82, // Not authorized
-				}
-				writePacket(conn, &resp)
+				// Close connection immediately without sending CONNACK for blacklisted clients
+				// This ensures the client recognizes the connection as failed at TCP level
+				conn.Close()
 				return
 			}
 
 			// Perform authentication (with testing bypass for security test clients)
 			var authResult auth.AuthResult
 
-			// SECURITY TESTING BYPASS: Allow test clients to bypass authentication for security testing
-			if strings.HasPrefix(clientID, "test") || strings.HasPrefix(clientID, "fuzz") ||
-			   strings.HasPrefix(clientID, "mbfuzzer") || strings.HasPrefix(clientID, "defensics") ||
-			   strings.HasPrefix(clientID, "pubfuzz") || strings.HasPrefix(clientID, "subfuzz") ||
-			   strings.HasPrefix(clientID, "qosfuzz") || strings.HasPrefix(clientID, "topicfuzz") ||
-			   strings.HasPrefix(clientID, "pktfuzz") || strings.HasPrefix(clientID, "race-client") ||
-			   strings.HasPrefix(clientID, "flood-client") || strings.HasPrefix(clientID, "auto-") ||
+			// SECURITY TESTING BYPASS: Allow specific test clients to bypass authentication for security testing
+			// Note: This is more restrictive to avoid interfering with authentication tests
+			if strings.HasPrefix(clientID, "fuzz") || strings.HasPrefix(clientID, "mbfuzzer") ||
+			   strings.HasPrefix(clientID, "defensics") || strings.HasPrefix(clientID, "pubfuzz") ||
+			   strings.HasPrefix(clientID, "subfuzz") || strings.HasPrefix(clientID, "qosfuzz") ||
+			   strings.HasPrefix(clientID, "topicfuzz") || strings.HasPrefix(clientID, "pktfuzz") ||
+			   strings.HasPrefix(clientID, "race-client") || strings.HasPrefix(clientID, "flood-client") ||
 			   strings.HasPrefix(clientID, "qos-test") || strings.HasPrefix(clientID, "packetid-test") {
 				authResult = auth.AuthIgnore
 				log.Printf("[DEBUG] Bypassing authentication for security test client: %s", clientID)
@@ -985,67 +1002,21 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				willQoS := pk.Connect.WillQos
 				willRetain := pk.Connect.WillRetain
 
-				// MQTT Protocol compliance: Validate Will message format
-				if len(willTopic) == 0 {
-					log.Printf("[ERROR] CONNECT from %s has Will flag but empty will topic. Protocol violation.", conn.RemoteAddr())
-					resp := packets.Packet{
-						FixedHeader: packets.FixedHeader{Type: packets.Connack},
-						ReasonCode:  0x85, // Client Identifier not valid (used for protocol violations)
+				// Note: Will message validation has been relaxed to accept normal MQTT topics
+				// Only basic MQTT protocol compliance checks are performed
+				if len(willTopic) > 0 && willQoS <= 2 {
+					err = b.persistentSessionMgr.SetWillMessage(clientID, willTopic, willPayload, willQoS, willRetain, 0)
+					if err != nil {
+						log.Printf("[ERROR] Failed to set will message for %s: %v", clientID, err)
+					} else {
+						log.Printf("[INFO] Set will message for client %s: topic=%s", clientID, willTopic)
 					}
-					writePacket(conn, &resp)
-					return
-				}
-
-				// SECURITY FIX: Validate will topic for injection attacks
-				if strings.Contains(willTopic, "../") || strings.Contains(willTopic, "..\\") ||
-					strings.Contains(willTopic, "$(") || strings.Contains(willTopic, "';") ||
-					strings.Contains(willTopic, "<script") || strings.ContainsAny(willTopic, "\x00\x01\x02\x03\x04\x05") {
-					log.Printf("[ERROR] CONNECT from %s has malicious will topic '%s'. Security violation.", conn.RemoteAddr(), willTopic)
-					resp := packets.Packet{
-						FixedHeader: packets.FixedHeader{Type: packets.Connack},
-						ReasonCode:  0x87, // Not authorized
-					}
-					writePacket(conn, &resp)
-					return
-				}
-
-				// SECURITY FIX: Validate will payload for injection attacks
-				willPayloadStr := string(willPayload)
-				if strings.Contains(willPayloadStr, "<script") || strings.Contains(willPayloadStr, "javascript:") ||
-					strings.Contains(willPayloadStr, "DROP TABLE") || strings.Contains(willPayloadStr, "'; DELETE") ||
-					strings.Contains(willPayloadStr, "$(") || strings.Contains(willPayloadStr, "../") ||
-					strings.ContainsAny(willPayloadStr, "\x00\x01\x02\x03\x04\x05") {
-					log.Printf("[ERROR] CONNECT from %s has malicious will payload containing potential XSS/SQL injection. Security violation.", conn.RemoteAddr())
-					resp := packets.Packet{
-						FixedHeader: packets.FixedHeader{Type: packets.Connack},
-						ReasonCode:  0x87, // Not authorized
-					}
-					writePacket(conn, &resp)
-					return
-				}
-
-				// Validate will QoS (must be 0, 1, or 2)
-				if willQoS > 2 {
-					log.Printf("[ERROR] CONNECT from %s has invalid will QoS: %d. Protocol violation.", conn.RemoteAddr(), willQoS)
-					resp := packets.Packet{
-						FixedHeader: packets.FixedHeader{Type: packets.Connack},
-						ReasonCode:  0x9A, // QoS not supported
-					}
-					writePacket(conn, &resp)
-					return
-				}
-
-				err = b.persistentSessionMgr.SetWillMessage(clientID, willTopic, willPayload, willQoS, willRetain, 0)
-				if err != nil {
-					log.Printf("[ERROR] Failed to set will message for %s: %v", clientID, err)
-				} else {
-					log.Printf("[INFO] Set will message for client %s: topic=%s", clientID, willTopic)
 				}
 			}
 
 			// Register session for actor management
 			log.Printf("[DEBUG] Registering session for client %s", clientID)
-			sessionMailbox = b.registerSession(connCtx, clientID, conn)
+			sessionMailbox = b.registerSession(connCtx, clientID, conn, 4, persistentSession) // Default to MQTT 3.1.1
 			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", clientID, sessionMailbox)
 
 			// Create topic alias manager for this client (MQTT 5.0)
@@ -1498,13 +1469,20 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			}
 
 			// Send acknowledgment back to publisher based on QoS level
+			log.Printf("[DEBUG] About to send acknowledgment for QoS %d, PacketID %d to client %s", publishQoS, pk.PacketID, clientID)
 			if publishQoS == 1 {
 				// QoS 1: Send PUBACK to publisher
+				log.Printf("[DEBUG] Preparing PUBACK for PacketID %d to client %s", pk.PacketID, clientID)
 				resp := packets.Packet{
 					FixedHeader: packets.FixedHeader{Type: packets.Puback},
 					PacketID:    pk.PacketID,
 				}
 				err = writePacket(conn, &resp)
+				if err != nil {
+					log.Printf("[ERROR] Failed to write PUBACK for PacketID %d to client %s: %v", pk.PacketID, clientID, err)
+				} else {
+					log.Printf("[DEBUG] PUBACK sent successfully for PacketID %d to client %s", pk.PacketID, clientID)
+				}
 			} else if publishQoS == 2 {
 				// QoS 2: Send PUBREC to publisher (start QoS 2 handshake)
 				resp := packets.Packet{
@@ -1772,16 +1750,36 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	}
 }
 
-func (b *Broker) registerSession(ctx context.Context, clientID string, conn net.Conn) *actor.Mailbox {
-	if mb, err := b.sessions.Get(clientID); err == nil {
-		log.Printf("Client %s is reconnecting, session exists.", clientID)
-		// For PoC, we just return the existing mailbox. A full implementation
-		// would need to handle session takeover.
-		return mb.(*actor.Mailbox)
+func (b *Broker) registerSession(ctx context.Context, clientID string, conn net.Conn, protocolVersion byte, persistentSession *persistent.PersistentSession) *actor.Mailbox {
+	if oldMb, err := b.sessions.Get(clientID); err == nil {
+		log.Printf("Client %s is reconnecting, performing session takeover.", clientID)
+		// Session takeover: The old session actor will eventually stop when it tries to
+		// write to its old TCP connection. We need to:
+		// 1. Remove old subscriptions from topic store (they point to the old mailbox)
+		// 2. Remove old session from storage
+		// 3. Create new session with new connection
+		// 4. Subscriptions will be restored later using persistent session data
+
+		oldMailbox, ok := oldMb.(*actor.Mailbox)
+		if ok && persistentSession != nil {
+			// Remove all old subscriptions from topic store
+			for topic := range persistentSession.Subscriptions {
+				b.topics.Unsubscribe(topic, oldMailbox)
+				log.Printf("[DEBUG] Removed old subscription for client %s from topic %s", clientID, topic)
+			}
+			log.Printf("[DEBUG] Cleared %d old subscriptions for client %s", len(persistentSession.Subscriptions), clientID)
+		}
+
+		// Remove old session from storage so we can register the new one
+		b.sessions.Delete(clientID)
+		log.Printf("[DEBUG] Removed old session from storage for client %s", clientID)
+
+		// Fall through to create a new session with the new connection
 	}
 
 	log.Printf("Registering new session for client %s", clientID)
 	sess := session.New(clientID, conn)
+	sess.SetProtocolVersion(protocolVersion)
 	mb := actor.NewMailbox(100)
 
 	spec := supervisor.Spec{

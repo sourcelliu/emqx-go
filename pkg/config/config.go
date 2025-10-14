@@ -44,11 +44,12 @@ type AuthConfig struct {
 
 // BrokerConfig represents the overall broker configuration
 type BrokerConfig struct {
-	NodeID      string     `yaml:"node_id" json:"node_id"`
-	MQTTPort    string     `yaml:"mqtt_port" json:"mqtt_port"`
-	GRPCPort    string     `yaml:"grpc_port" json:"grpc_port"`
-	MetricsPort string     `yaml:"metrics_port" json:"metrics_port"`
-	Auth        AuthConfig `yaml:"auth" json:"auth"`
+	NodeID        string     `yaml:"node_id" json:"node_id"`
+	MQTTPort      string     `yaml:"mqtt_port" json:"mqtt_port"`
+	GRPCPort      string     `yaml:"grpc_port" json:"grpc_port"`
+	MetricsPort   string     `yaml:"metrics_port" json:"metrics_port"`
+	DashboardPort string     `yaml:"dashboard_port" json:"dashboard_port"`
+	Auth          AuthConfig `yaml:"auth" json:"auth"`
 }
 
 // Config holds the complete configuration
@@ -60,10 +61,11 @@ type Config struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Broker: BrokerConfig{
-			NodeID:      "emqx-go-node",
-			MQTTPort:    ":1883",
-			GRPCPort:    ":8081",
-			MetricsPort: ":8082",
+			NodeID:        "emqx-go-node",
+			MQTTPort:      ":1883",
+			GRPCPort:      ":8081",
+			MetricsPort:   ":8082",
+			DashboardPort: ":18083",
 			Auth: AuthConfig{
 				Enabled: true,
 				Users: []UserConfig{

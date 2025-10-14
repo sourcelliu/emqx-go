@@ -21,6 +21,7 @@ NODE_ID=node1 \
 MQTT_PORT=:1883 \
 GRPC_PORT=:8081 \
 METRICS_PORT=:8082 \
+DASHBOARD_PORT=:18083 \
 ./bin/emqx-go > ./logs/node1.log 2>&1 &
 NODE1_PID=$!
 echo "Node1 started with PID: $NODE1_PID"
@@ -34,6 +35,7 @@ NODE_ID=node2 \
 MQTT_PORT=:1884 \
 GRPC_PORT=:8083 \
 METRICS_PORT=:8084 \
+DASHBOARD_PORT=:18084 \
 PEER_NODES=localhost:8081 \
 ./bin/emqx-go > ./logs/node2.log 2>&1 &
 NODE2_PID=$!
@@ -48,6 +50,7 @@ NODE_ID=node3 \
 MQTT_PORT=:1885 \
 GRPC_PORT=:8085 \
 METRICS_PORT=:8086 \
+DASHBOARD_PORT=:18085 \
 PEER_NODES=localhost:8081,localhost:8083 \
 ./bin/emqx-go > ./logs/node3.log 2>&1 &
 NODE3_PID=$!
@@ -55,9 +58,9 @@ echo "Node3 started with PID: $NODE3_PID"
 
 echo ""
 echo "Cluster started successfully!"
-echo "Node1 PID: $NODE1_PID (MQTT: 1883, gRPC: 8081, Metrics: 8082)"
-echo "Node2 PID: $NODE2_PID (MQTT: 1884, gRPC: 8083, Metrics: 8084)"
-echo "Node3 PID: $NODE3_PID (MQTT: 1885, gRPC: 8085, Metrics: 8086)"
+echo "Node1 PID: $NODE1_PID (MQTT: 1883, gRPC: 8081, Metrics: 8082, Dashboard: 18083)"
+echo "Node2 PID: $NODE2_PID (MQTT: 1884, gRPC: 8083, Metrics: 8084, Dashboard: 18084)"
+echo "Node3 PID: $NODE3_PID (MQTT: 1885, gRPC: 8085, Metrics: 8086, Dashboard: 18085)"
 echo ""
 echo "Log files:"
 echo "  - ./logs/node1.log"

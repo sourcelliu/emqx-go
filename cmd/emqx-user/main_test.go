@@ -363,7 +363,7 @@ func TestPasswordMasking(t *testing.T) {
 
 	// Verify password is masked
 	assert.Contains(t, output, "longpassuser")
-	assert.Contains(t, output, "****") // Should contain masked password
+	assert.Contains(t, output, "****")                      // Should contain masked password
 	assert.NotContains(t, output, "verylongpassword123456") // Should not contain full password
 }
 

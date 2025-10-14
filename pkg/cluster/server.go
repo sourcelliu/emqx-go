@@ -52,8 +52,9 @@ func NewServer(nodeID string, manager *Manager) *Server {
 func (s *Server) Join(ctx context.Context, req *clusterpb.JoinRequest) (*clusterpb.JoinResponse, error) {
 	log.Printf("Received Join request from node %s at %s", req.Node.NodeId, req.Node.Address)
 
-	// Add the joining peer to our peer list
-	go s.manager.AddPeer(ctx, req.Node.NodeId, req.Node.Address)
+	// Add the joining peer to our peer list using background context (not the RPC request context)
+	// The request context gets canceled when the RPC completes, but peer connection should persist
+	go s.manager.AddPeer(context.Background(), req.Node.NodeId, req.Node.Address)
 
 	// In a real implementation, we would add the node to our peer list.
 	return &clusterpb.JoinResponse{

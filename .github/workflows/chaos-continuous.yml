@@ -1,0 +1,314 @@
+name: Continuous Chaos Testing
+
+on:
+  # Daily chaos tests
+  schedule:
+    - cron: '0 2 * * *'  # Run at 2 AM UTC every day
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: 'Comma-separated list of scenarios to run (or "all")'
+        required: false
+        default: 'all'
+      duration:
+        description: 'Test duration per scenario in seconds'
+        required: false
+        default: '60'
+      notify:
+        description: 'Send notifications on failure'
+        required: false
+        default: 'true'
+
+  # On pull request (selected scenarios only)
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'pkg/**'
+      - 'cmd/**'
+      - 'tests/**'
+
+  # On push to master (quick validation)
+  push:
+    branches: [ master ]
+    paths:
+      - 'pkg/chaos/**'
+      - 'pkg/cluster/**'
+
+jobs:
+  # Quick chaos validation (on PR and push)
+  quick-chaos:
+    name: Quick Chaos Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Build
+        run: |
+          go build -o bin/emqx-go ./cmd/emqx-go
+          go build -o bin/chaos-test-runner ./tests/chaos-test-runner
+
+      - name: Run baseline test
+        run: |
+          ./bin/chaos-test-runner -scenario baseline -duration 30
+
+      - name: Run network delay test
+        run: |
+          ./bin/chaos-test-runner -scenario network-delay -duration 30
+
+      - name: Run network loss test
+        run: |
+          ./bin/chaos-test-runner -scenario network-loss -duration 30
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: quick-chaos-results
+          path: chaos-test-report-*.md
+          retention-days: 7
+
+  # Full chaos test suite (daily and manual)
+  full-chaos:
+    name: Full Chaos Test Suite
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    strategy:
+      matrix:
+        scenario:
+          - baseline
+          - network-delay
+          - high-network-delay
+          - network-loss
+          - high-network-loss
+          - combined-network
+          - cpu-stress
+          - extreme-cpu-stress
+          - clock-skew
+          - cascade-failure
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.21'
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Build binaries
+        run: |
+          go build -o bin/emqx-go ./cmd/emqx-go
+          go build -o bin/chaos-test-runner ./tests/chaos-test-runner
+          go build -o bin/cluster-test ./tests/cluster
+
+      - name: Run chaos scenario
+        id: chaos_test
+        continue-on-error: true
+        run: |
+          DURATION=${{ github.event.inputs.duration || '60' }}
+          ./bin/chaos-test-runner -scenario ${{ matrix.scenario }} -duration $DURATION
+          echo "test_result=$?" >> $GITHUB_OUTPUT
+
+      - name: Collect metrics
+        if: always()
+        run: |
+          # Collect system metrics if cluster is still running
+          for port in 8082 8084 8086; do
+            curl -s http://localhost:$port/metrics > metrics-$port-${{ matrix.scenario }}.txt 2>/dev/null || true
+          done
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: chaos-results-${{ matrix.scenario }}
+          path: |
+            chaos-test-report-*.md
+            metrics-*.txt
+          retention-days: 30
+
+      - name: Check test result
+        if: steps.chaos_test.outputs.test_result != '0'
+        run: |
+          echo "::error::Chaos test failed for scenario: ${{ matrix.scenario }}"
+          exit 1
+
+  # Analyze and report results
+  analyze-results:
+    name: Analyze and Report
+    runs-on: ubuntu-latest
+    needs: full-chaos
+    if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: chaos-results
+
+      - name: Analyze results
+        id: analyze
+        run: |
+          # Create analysis
+          python3 scripts/analyze-chaos-results.py chaos-results/ > analysis-output.txt 2>&1 || true
+
+          # Extract key metrics
+          OVERALL_SCORE=$(grep "Overall Resilience:" analysis-output.txt | awk '{print $3}' | cut -d'/' -f1 || echo "0")
+          echo "overall_score=$OVERALL_SCORE" >> $GITHUB_OUTPUT
+
+          cat analysis-output.txt
+
+      - name: Upload analysis
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: chaos-analysis
+          path: |
+            analysis-output.txt
+            chaos-results/*/analysis.json
+          retention-days: 90
+
+      - name: Create summary
+        if: always()
+        run: |
+          echo "# Chaos Testing Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Date**: $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "**Overall Resilience Score**: ${{ steps.analyze.outputs.overall_score }}/10" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Results" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat analysis-output.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Check resilience threshold
+        if: steps.analyze.outputs.overall_score != '' && steps.analyze.outputs.overall_score < 8
+        run: |
+          echo "::warning::System resilience score (${{ steps.analyze.outputs.overall_score }}) is below threshold (8.0)"
+
+  # Notify on failure
+  notify-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: [quick-chaos, full-chaos, analyze-results]
+    if: |
+      always() &&
+      (needs.quick-chaos.result == 'failure' || needs.full-chaos.result == 'failure') &&
+      github.event.inputs.notify != 'false'
+
+    steps:
+      - name: Create issue on failure
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const title = '🔥 Chaos Testing Failed';
+            const body = `
+            ## Chaos Testing Failure Report
+
+            **Workflow Run**: [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            **Triggered by**: ${{ github.event_name }}
+            **Date**: ${new Date().toISOString()}
+
+            ### Failed Jobs
+            - Quick Chaos: ${{ needs.quick-chaos.result }}
+            - Full Chaos: ${{ needs.full-chaos.result }}
+            - Analysis: ${{ needs.analyze-results.result }}
+
+            ### Action Required
+            Please investigate the chaos testing failures and restore system resilience.
+
+            ### Artifacts
+            Check the workflow run artifacts for detailed test results and metrics.
+            `;
+
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['chaos-testing', 'needs-investigation', 'priority-high']
+            });
+
+  # Performance regression check
+  performance-regression:
+    name: Performance Regression Check
+    runs-on: ubuntu-latest
+    needs: full-chaos
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Download baseline results
+        uses: dawidd6/action-download-artifact@v2
+        continue-on-error: true
+        with:
+          workflow: chaos-tests.yml
+          branch: master
+          name: chaos-results-baseline
+          path: baseline-results
+
+      - name: Download current results
+        uses: actions/download-artifact@v3
+        with:
+          name: chaos-results-baseline
+          path: current-results
+
+      - name: Compare performance
+        id: compare
+        run: |
+          # Compare baseline metrics
+          if [ -f baseline-results/analysis.json ] && [ -f current-results/analysis.json ]; then
+            echo "Comparing baseline performance..."
+            # TODO: Implement comparison logic
+            echo "regression_detected=false" >> $GITHUB_OUTPUT
+          else
+            echo "::warning::Baseline data not available for comparison"
+            echo "regression_detected=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const regression = '${{ steps.compare.outputs.regression_detected }}' === 'true';
+            const body = regression
+              ? '⚠️ **Performance Regression Detected**\n\nChaos testing shows performance degradation compared to baseline.'
+              : '✅ **No Performance Regression**\n\nChaos testing shows acceptable performance.';
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

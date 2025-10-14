@@ -70,7 +70,7 @@ func main() {
 
 	// Create dashboard server with default config
 	config := dashboard.DefaultConfig()
-	config.Address = "127.0.0.1"  // Bind to localhost for security
+	config.Address = "127.0.0.1" // Bind to localhost for security
 
 	dashboardServer, err := dashboard.NewServer(config, adminAPI, metricsManager, healthChecker, brokerInstance.GetCertificateManager(), connectorManager, ruleEngine, integrationEngine)
 	if err != nil {

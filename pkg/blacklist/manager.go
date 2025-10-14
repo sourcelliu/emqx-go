@@ -47,7 +47,7 @@ type BlacklistEntry struct {
 	ID          string          `json:"id"`
 	Type        BlacklistType   `json:"type"`
 	Value       string          `json:"value"`
-	Pattern     string          `json:"pattern,omitempty"`    // For regex patterns
+	Pattern     string          `json:"pattern,omitempty"` // For regex patterns
 	Action      BlacklistAction `json:"action"`
 	Reason      string          `json:"reason,omitempty"`
 	Description string          `json:"description,omitempty"`
@@ -84,39 +84,39 @@ type BlacklistManager struct {
 
 // BlacklistStats represents statistics for blacklist operations
 type BlacklistStats struct {
-	TotalEntries     int                          `json:"total_entries"`
-	EntriesByType    map[BlacklistType]int        `json:"entries_by_type"`
-	EntriesByAction  map[BlacklistAction]int      `json:"entries_by_action"`
-	TotalBlocks      int64                        `json:"total_blocks"`
-	BlocksByType     map[BlacklistType]int64      `json:"blocks_by_type"`
-	RecentBlocks     []BlacklistBlock             `json:"recent_blocks"`
-	LastUpdated      time.Time                    `json:"last_updated"`
+	TotalEntries    int                     `json:"total_entries"`
+	EntriesByType   map[BlacklistType]int   `json:"entries_by_type"`
+	EntriesByAction map[BlacklistAction]int `json:"entries_by_action"`
+	TotalBlocks     int64                   `json:"total_blocks"`
+	BlocksByType    map[BlacklistType]int64 `json:"blocks_by_type"`
+	RecentBlocks    []BlacklistBlock        `json:"recent_blocks"`
+	LastUpdated     time.Time               `json:"last_updated"`
 }
 
 // BlacklistBlock represents a blocked action
 type BlacklistBlock struct {
-	Timestamp   time.Time       `json:"timestamp"`
-	Type        BlacklistType   `json:"type"`
-	Value       string          `json:"value"`
-	Action      BlacklistAction `json:"action"`
-	EntryID     string          `json:"entry_id"`
-	ClientInfo  ClientInfo      `json:"client_info"`
-	Reason      string          `json:"reason"`
+	Timestamp  time.Time       `json:"timestamp"`
+	Type       BlacklistType   `json:"type"`
+	Value      string          `json:"value"`
+	Action     BlacklistAction `json:"action"`
+	EntryID    string          `json:"entry_id"`
+	ClientInfo ClientInfo      `json:"client_info"`
+	Reason     string          `json:"reason"`
 }
 
 // ClientInfo represents client information for blacklist checking
 type ClientInfo struct {
-	ClientID    string `json:"client_id"`
-	Username    string `json:"username"`
-	IPAddress   string `json:"ip_address"`
-	Protocol    string `json:"protocol"`
+	ClientID    string    `json:"client_id"`
+	Username    string    `json:"username"`
+	IPAddress   string    `json:"ip_address"`
+	Protocol    string    `json:"protocol"`
 	ConnectedAt time.Time `json:"connected_at"`
 }
 
 // TopicAccess represents topic access information
 type TopicAccess struct {
-	Topic      string `json:"topic"`
-	Action     string `json:"action"` // publish, subscribe, pubsub
+	Topic      string     `json:"topic"`
+	Action     string     `json:"action"` // publish, subscribe, pubsub
 	ClientInfo ClientInfo `json:"client_info"`
 }
 
@@ -412,7 +412,7 @@ func (bm *BlacklistManager) validateEntry(entry *BlacklistEntry) error {
 	}
 
 	if entry.Type != ClientIDBlacklist && entry.Type != UsernameBlacklist &&
-	   entry.Type != IPAddressBlacklist && entry.Type != TopicBlacklist {
+		entry.Type != IPAddressBlacklist && entry.Type != TopicBlacklist {
 		return ErrInvalidType
 	}
 
