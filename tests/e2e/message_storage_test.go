@@ -418,6 +418,8 @@ func setupStorageTestMQTTClient(clientID string, t *testing.T) mqtt.Client {
 	opts := mqtt.NewClientOptions()
 	opts.AddBroker(storageBrokerURL)
 	opts.SetClientID(clientID)
+	opts.SetUsername("admin")
+	opts.SetPassword("admin123")
 	opts.SetKeepAlive(60 * time.Second)
 	opts.SetDefaultPublishHandler(func(client mqtt.Client, msg mqtt.Message) {
 		t.Logf("Unexpected message on client %s: %s", clientID, msg.Payload())

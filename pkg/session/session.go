@@ -57,8 +57,9 @@ type Publish struct {
 type Session struct {
 	// ID is the unique identifier for the client session, typically the MQTT
 	// Client ID.
-	ID   string
-	conn io.Writer
+	ID              string
+	conn            io.Writer
+	protocolVersion byte // MQTT protocol version (3 for 3.1, 4 for 3.1.1, 5 for 5.0)
 
 	// Topic alias management for MQTT 5.0
 	mu                      sync.RWMutex
@@ -86,6 +87,23 @@ func (s *Session) SetTopicAliasMaximum(maximum uint16) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.topicAliasMaximum = maximum
+}
+
+// SetProtocolVersion sets the MQTT protocol version for this session
+func (s *Session) SetProtocolVersion(version byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.protocolVersion = version
+}
+
+// GetProtocolVersion returns the MQTT protocol version for this session
+func (s *Session) GetProtocolVersion() byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.protocolVersion == 0 {
+		return 4 // Default to MQTT 3.1.1
+	}
+	return s.protocolVersion
 }
 
 // GetTopicAliasMaximum returns the maximum topic alias value for this session
@@ -153,7 +171,7 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 				},
 				TopicName:       m.Topic,
 				Payload:         m.Payload,
-				ProtocolVersion: 5, // Enable MQTT 5.0 for topic aliases and user properties support
+				ProtocolVersion: s.GetProtocolVersion(), // Use client's actual protocol version
 			}
 
 			// Handle topic aliases for MQTT 5.0
