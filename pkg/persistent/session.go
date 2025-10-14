@@ -143,6 +143,7 @@ type SessionManager struct {
 	retryTicker   *time.Ticker
 	stopCleanup   chan struct{}
 	stopRetry     chan struct{}
+	closed        bool
 
 	mu sync.RWMutex
 }
@@ -462,6 +463,15 @@ func (sm *SessionManager) NextPacketID(clientID string) (uint16, error) {
 
 // Close shuts down the session manager
 func (sm *SessionManager) Close() error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Check if already closed
+	if sm.closed {
+		return nil
+	}
+	sm.closed = true
+
 	if sm.cleanupTicker != nil {
 		sm.cleanupTicker.Stop()
 		close(sm.stopCleanup)
@@ -477,7 +487,6 @@ func (sm *SessionManager) Close() error {
 	}
 
 	// Save all active sessions
-	sm.mu.RLock()
 	for _, session := range sm.activeSessions {
 		if !session.CleanSession {
 			if err := sm.saveSession(session); err != nil {
@@ -485,7 +494,6 @@ func (sm *SessionManager) Close() error {
 			}
 		}
 	}
-	sm.mu.RUnlock()
 
 	return nil
 }
