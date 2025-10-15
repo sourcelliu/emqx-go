@@ -50,6 +50,10 @@ type Publish struct {
 	CorrelationData []byte
 }
 
+// Stop is an internal message requesting the session actor to terminate.
+// It allows the broker to gently shut down a session, e.g. during a takeover.
+type Stop struct{}
+
 // Session is an actor that manages the state and network connection for a single
 // MQTT client. Its primary responsibility is to receive Publish messages from
 // the broker and write the corresponding MQTT PUBLISH packets to the client's
@@ -197,7 +201,6 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 				pk.Properties.TopicAlias = topicAlias
 				pk.Properties.TopicAliasFlag = true
 			}
-
 			// Add MQTT 5.0 user properties if present
 			if len(m.UserProperties) > 0 {
 				for key, value := range m.UserProperties {
@@ -236,6 +239,14 @@ func (s *Session) Start(ctx context.Context, mb *actor.Mailbox) error {
 				// failure and restart the actor if the strategy allows.
 				return err
 			}
+		case Stop:
+			log.Printf("Stopping session actor for client %s", s.ID)
+			if closer, ok := s.conn.(io.Closer); ok {
+				if err := closer.Close(); err != nil {
+					log.Printf("Failed to close connection for client %s: %v", s.ID, err)
+				}
+			}
+			return nil
 		default:
 			log.Printf("Session actor for %s received unknown message type: %T", s.ID, m)
 		}

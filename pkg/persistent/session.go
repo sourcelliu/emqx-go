@@ -31,54 +31,54 @@ import (
 // disconnections when CleanSession=false
 type PersistentSession struct {
 	// Basic session information
-	ClientID        string            `json:"client_id"`
-	CleanSession    bool              `json:"clean_session"`
-	Connected       bool              `json:"connected"`
-	CreatedAt       time.Time         `json:"created_at"`
-	LastActivity    time.Time         `json:"last_activity"`
-	ExpiryInterval  time.Duration     `json:"expiry_interval"`
+	ClientID       string        `json:"client_id"`
+	CleanSession   bool          `json:"clean_session"`
+	Connected      bool          `json:"connected"`
+	CreatedAt      time.Time     `json:"created_at"`
+	LastActivity   time.Time     `json:"last_activity"`
+	ExpiryInterval time.Duration `json:"expiry_interval"`
 
 	// Subscriptions: topic -> QoS
-	Subscriptions   map[string]byte   `json:"subscriptions"`
+	Subscriptions map[string]byte `json:"subscriptions"`
 
 	// Packet ID management
-	PacketIDCounter uint16            `json:"packet_id_counter"`
+	PacketIDCounter uint16 `json:"packet_id_counter"`
 
 	// Inflight messages waiting for acknowledgment
-	InflightQoS1    map[uint16]*InflightMessage `json:"inflight_qos1"`
-	InflightQoS2    map[uint16]*InflightMessage `json:"inflight_qos2"`
+	InflightQoS1 map[uint16]*InflightMessage `json:"inflight_qos1"`
+	InflightQoS2 map[uint16]*InflightMessage `json:"inflight_qos2"`
 
 	// Offline message queue
-	MessageQueue    []*QueuedMessage  `json:"message_queue"`
+	MessageQueue []*QueuedMessage `json:"message_queue"`
 
 	// Will message configuration
-	WillMessage     *WillMessage      `json:"will_message,omitempty"`
+	WillMessage *WillMessage `json:"will_message,omitempty"`
 
 	// Synchronization
-	mu              sync.RWMutex      `json:"-"`
+	mu sync.RWMutex `json:"-"`
 }
 
 // InflightMessage represents a message waiting for acknowledgment
 type InflightMessage struct {
-	PacketID    uint16            `json:"packet_id"`
-	Topic       string            `json:"topic"`
-	Payload     []byte            `json:"payload"`
-	QoS         byte              `json:"qos"`
-	Retain      bool              `json:"retain"`
-	Timestamp   time.Time         `json:"timestamp"`
-	RetryCount  int               `json:"retry_count"`
-	Headers     map[string]string `json:"headers,omitempty"`
+	PacketID   uint16            `json:"packet_id"`
+	Topic      string            `json:"topic"`
+	Payload    []byte            `json:"payload"`
+	QoS        byte              `json:"qos"`
+	Retain     bool              `json:"retain"`
+	Timestamp  time.Time         `json:"timestamp"`
+	RetryCount int               `json:"retry_count"`
+	Headers    map[string]string `json:"headers,omitempty"`
 }
 
 // QueuedMessage represents an offline message waiting to be delivered
 type QueuedMessage struct {
-	Topic       string            `json:"topic"`
-	Payload     []byte            `json:"payload"`
-	QoS         byte              `json:"qos"`
-	Retain      bool              `json:"retain"`
-	Timestamp   time.Time         `json:"timestamp"`
-	ExpiryTime  *time.Time        `json:"expiry_time,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
+	Topic      string            `json:"topic"`
+	Payload    []byte            `json:"payload"`
+	QoS        byte              `json:"qos"`
+	Retain     bool              `json:"retain"`
+	Timestamp  time.Time         `json:"timestamp"`
+	ExpiryTime *time.Time        `json:"expiry_time,omitempty"`
+	Headers    map[string]string `json:"headers,omitempty"`
 }
 
 // WillMessage represents the last will and testament message
@@ -93,7 +93,7 @@ type WillMessage struct {
 // Config defines configuration for persistent session management
 type Config struct {
 	// Maximum number of messages to queue for offline clients
-	MaxOfflineMessages  uint64        `json:"max_offline_messages"`
+	MaxOfflineMessages uint64 `json:"max_offline_messages"`
 
 	// Maximum time to keep messages in offline queue
 	MessageExpiryInterval time.Duration `json:"message_expiry_interval"`
@@ -102,16 +102,16 @@ type Config struct {
 	DefaultSessionExpiry time.Duration `json:"default_session_expiry"`
 
 	// Interval for retrying unacknowledged QoS 1/2 messages
-	RetryInterval       time.Duration `json:"retry_interval"`
+	RetryInterval time.Duration `json:"retry_interval"`
 
 	// Maximum number of retry attempts for QoS 1/2 messages
-	MaxRetryAttempts    int           `json:"max_retry_attempts"`
+	MaxRetryAttempts int `json:"max_retry_attempts"`
 
 	// Cleanup interval for expired sessions and messages
-	CleanupInterval     time.Duration `json:"cleanup_interval"`
+	CleanupInterval time.Duration `json:"cleanup_interval"`
 
 	// Maximum number of inflight messages per session
-	MaxInflightMessages uint16        `json:"max_inflight_messages"`
+	MaxInflightMessages uint16 `json:"max_inflight_messages"`
 }
 
 // DefaultConfig returns a default configuration for persistent sessions
@@ -129,11 +129,11 @@ func DefaultConfig() *Config {
 
 // SessionManager manages persistent sessions for MQTT clients
 type SessionManager struct {
-	store   storage.Store
-	config  *Config
+	store  storage.Store
+	config *Config
 
 	// Active sessions (connected clients)
-	activeSessions map[string]*PersistentSession
+	activeSessions sync.Map // map[string]*PersistentSession
 
 	// Will message management
 	willManager *WillMessageManager
@@ -155,11 +155,10 @@ func NewSessionManager(store storage.Store, config *Config) *SessionManager {
 	}
 
 	sm := &SessionManager{
-		store:          store,
-		config:         config,
-		activeSessions: make(map[string]*PersistentSession),
-		stopCleanup:    make(chan struct{}),
-		stopRetry:      make(chan struct{}),
+		store:       store,
+		config:      config,
+		stopCleanup: make(chan struct{}),
+		stopRetry:   make(chan struct{}),
 	}
 
 	// Initialize will message manager with a placeholder publisher
@@ -180,13 +179,12 @@ func (sm *SessionManager) SetWillMessagePublisher(publisher WillMessagePublisher
 
 // CreateOrResumeSession creates a new session or resumes an existing persistent session
 func (sm *SessionManager) CreateOrResumeSession(clientID string, cleanSession bool, expiryInterval time.Duration) (*PersistentSession, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
 	now := time.Now()
 
 	// Check if session already exists in active sessions
-	if activeSession, exists := sm.activeSessions[clientID]; exists {
+	if existing, exists := sm.activeSessions.Load(clientID); exists {
+		activeSession := existing.(*PersistentSession)
 		activeSession.mu.Lock()
 		activeSession.Connected = true
 		activeSession.LastActivity = now
@@ -215,7 +213,7 @@ func (sm *SessionManager) CreateOrResumeSession(clientID string, cleanSession bo
 				session.ExpiryInterval = expiryInterval
 			}
 
-			sm.activeSessions[clientID] = session
+			sm.activeSessions.Store(clientID, session)
 			log.Printf("[INFO] Resumed persistent session for client %s (offline messages: %d, subscriptions: %d)",
 				clientID, len(session.MessageQueue), len(session.Subscriptions))
 			return session, nil
@@ -240,8 +238,29 @@ func (sm *SessionManager) CreateOrResumeSession(clientID string, cleanSession bo
 	if session.ExpiryInterval == 0 {
 		session.ExpiryInterval = sm.config.DefaultSessionExpiry
 	}
+	if expiryInterval > 0 {
+		session.ExpiryInterval = expiryInterval
+	}
 
-	sm.activeSessions[clientID] = session
+	if existing, loaded := sm.activeSessions.LoadOrStore(clientID, session); loaded {
+		// Another goroutine created the session concurrently. Reuse the existing one.
+		activeSession := existing.(*PersistentSession)
+		activeSession.mu.Lock()
+		activeSession.Connected = true
+		activeSession.LastActivity = now
+		if cleanSession {
+			activeSession.CleanSession = true
+			activeSession.Subscriptions = make(map[string]byte)
+			activeSession.MessageQueue = nil
+			activeSession.InflightQoS1 = make(map[uint16]*InflightMessage)
+			activeSession.InflightQoS2 = make(map[uint16]*InflightMessage)
+			activeSession.WillMessage = nil
+		}
+		activeSession.mu.Unlock()
+
+		log.Printf("[INFO] Resumed active session for client %s (cleanSession: %t)", clientID, cleanSession)
+		return activeSession, nil
+	}
 
 	// Save to persistent storage if not clean session
 	if !cleanSession {
@@ -256,13 +275,11 @@ func (sm *SessionManager) CreateOrResumeSession(clientID string, cleanSession bo
 
 // DisconnectSession marks a session as disconnected and handles will message
 func (sm *SessionManager) DisconnectSession(clientID string, graceful bool) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	session, exists := sm.activeSessions[clientID]
+	value, exists := sm.activeSessions.Load(clientID)
 	if !exists {
 		return fmt.Errorf("session not found for client %s", clientID)
 	}
+	session := value.(*PersistentSession)
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -290,7 +307,7 @@ func (sm *SessionManager) DisconnectSession(clientID string, graceful bool) erro
 
 	// If clean session, remove from active sessions and storage
 	if session.CleanSession {
-		delete(sm.activeSessions, clientID)
+		sm.activeSessions.Delete(clientID)
 		sm.deleteSession(clientID)
 		log.Printf("[INFO] Removed clean session for client %s", clientID)
 	} else {
@@ -306,13 +323,11 @@ func (sm *SessionManager) DisconnectSession(clientID string, graceful bool) erro
 
 // AddSubscription adds a subscription to the session
 func (sm *SessionManager) AddSubscription(clientID, topic string, qos byte) error {
-	sm.mu.RLock()
-	session, exists := sm.activeSessions[clientID]
-	sm.mu.RUnlock()
-
+	value, exists := sm.activeSessions.Load(clientID)
 	if !exists {
 		return fmt.Errorf("session not found for client %s", clientID)
 	}
+	session := value.(*PersistentSession)
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -333,13 +348,11 @@ func (sm *SessionManager) AddSubscription(clientID, topic string, qos byte) erro
 
 // RemoveSubscription removes a subscription from the session
 func (sm *SessionManager) RemoveSubscription(clientID, topic string) error {
-	sm.mu.RLock()
-	session, exists := sm.activeSessions[clientID]
-	sm.mu.RUnlock()
-
+	value, exists := sm.activeSessions.Load(clientID)
 	if !exists {
 		return fmt.Errorf("session not found for client %s", clientID)
 	}
+	session := value.(*PersistentSession)
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -360,13 +373,11 @@ func (sm *SessionManager) RemoveSubscription(clientID, topic string) error {
 
 // SetWillMessage sets the will message for a session
 func (sm *SessionManager) SetWillMessage(clientID, topic string, payload []byte, qos byte, retain bool, delayInterval time.Duration) error {
-	sm.mu.RLock()
-	session, exists := sm.activeSessions[clientID]
-	sm.mu.RUnlock()
-
+	value, exists := sm.activeSessions.Load(clientID)
 	if !exists {
 		return fmt.Errorf("session not found for client %s", clientID)
 	}
+	session := value.(*PersistentSession)
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -385,13 +396,11 @@ func (sm *SessionManager) SetWillMessage(clientID, topic string, payload []byte,
 
 // QueueMessage queues a message for offline delivery
 func (sm *SessionManager) QueueMessage(clientID, topic string, payload []byte, qos byte, retain bool) error {
-	sm.mu.RLock()
-	session, exists := sm.activeSessions[clientID]
-	sm.mu.RUnlock()
-
+	value, exists := sm.activeSessions.Load(clientID)
 	if !exists {
 		return fmt.Errorf("session not found for client %s", clientID)
 	}
+	session := value.(*PersistentSession)
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -441,13 +450,11 @@ func (sm *SessionManager) QueueMessage(clientID, topic string, payload []byte, q
 
 // NextPacketID generates the next packet ID for QoS 1/2 messages
 func (sm *SessionManager) NextPacketID(clientID string) (uint16, error) {
-	sm.mu.RLock()
-	session, exists := sm.activeSessions[clientID]
-	sm.mu.RUnlock()
-
+	value, exists := sm.activeSessions.Load(clientID)
 	if !exists {
 		return 0, fmt.Errorf("session not found for client %s", clientID)
 	}
+	session := value.(*PersistentSession)
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
@@ -487,13 +494,15 @@ func (sm *SessionManager) Close() error {
 	}
 
 	// Save all active sessions
-	for _, session := range sm.activeSessions {
+	sm.activeSessions.Range(func(_, value any) bool {
+		session := value.(*PersistentSession)
 		if !session.CleanSession {
 			if err := sm.saveSession(session); err != nil {
 				log.Printf("[ERROR] Failed to save session %s during shutdown: %v", session.ClientID, err)
 			}
 		}
-	}
+		return true
+	})
 
 	return nil
 }
@@ -565,17 +574,23 @@ func (sm *SessionManager) startRetryRoutine() {
 
 func (sm *SessionManager) cleanupExpiredSessions() {
 	now := time.Now()
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
 
-	for clientID, session := range sm.activeSessions {
+	// Take a snapshot of current sessions to avoid holding the write lock for long.
+	snapshot := make([]*PersistentSession, 0)
+	sm.activeSessions.Range(func(_, value any) bool {
+		session := value.(*PersistentSession)
+		snapshot = append(snapshot, session)
+		return true
+	})
+
+	var expiredClients []string
+
+	for _, session := range snapshot {
 		session.mu.Lock()
 
-		// Remove expired offline sessions
+		// Remove expired offline sessions after we finish scanning to minimize time holding the write lock.
 		if !session.Connected && now.Sub(session.LastActivity) > session.ExpiryInterval {
-			delete(sm.activeSessions, clientID)
-			sm.deleteSession(clientID)
-			log.Printf("[INFO] Cleaned up expired session for client %s", clientID)
+			expiredClients = append(expiredClients, session.ClientID)
 			session.mu.Unlock()
 			continue
 		}
@@ -591,13 +606,38 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 		if len(validMessages) != len(session.MessageQueue) {
 			session.MessageQueue = validMessages
 			if !session.CleanSession {
-				sm.saveSession(session)
+				if err := sm.saveSession(session); err != nil {
+					log.Printf("[ERROR] Failed to save session while cleaning up messages for %s: %v", session.ClientID, err)
+				}
 			}
-			log.Printf("[INFO] Cleaned up expired messages for client %s", clientID)
+			log.Printf("[INFO] Cleaned up expired messages for client %s", session.ClientID)
 		}
 
 		session.mu.Unlock()
 	}
+
+	if len(expiredClients) == 0 {
+		return
+	}
+
+	// Remove expired sessions while holding the write lock to ensure map consistency.
+	sm.mu.Lock()
+	for _, clientID := range expiredClients {
+		value, exists := sm.activeSessions.Load(clientID)
+		if !exists {
+			continue
+		}
+		session := value.(*PersistentSession)
+
+		session.mu.Lock()
+		if !session.Connected && now.Sub(session.LastActivity) > session.ExpiryInterval {
+			sm.activeSessions.Delete(clientID)
+			sm.deleteSession(clientID)
+			log.Printf("[INFO] Cleaned up expired session for client %s", clientID)
+		}
+		session.mu.Unlock()
+	}
+	sm.mu.Unlock()
 }
 
 func (sm *SessionManager) retryInflightMessages() {
