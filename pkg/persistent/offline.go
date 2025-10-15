@@ -70,14 +70,12 @@ func (omm *OfflineMessageManager) DeliverOfflineMessages(clientID string) error 
 	}
 
 	// Get session
-	omm.sessionManager.mu.RLock()
-	session, exists := omm.sessionManager.activeSessions[clientID]
-	omm.sessionManager.mu.RUnlock()
-
+	value, exists := omm.sessionManager.activeSessions.Load(clientID)
 	if !exists {
 		return fmt.Errorf("session not found for client %s", clientID)
 	}
 
+	session := value.(*PersistentSession)
 	session.mu.Lock()
 	defer session.mu.Unlock()
 
@@ -118,25 +116,25 @@ func (omm *OfflineMessageManager) DeliverOfflineMessages(clientID string) error 
 }
 
 // QueueMessageForOfflineClients queues a message for all matching offline clients
-func (omm *OfflineMessageManager) QueueMessageForOfflineClients(topic string, payload []byte, qos byte, retain bool, matcher TopicMatcher) error {
-	omm.sessionManager.mu.RLock()
-	defer omm.sessionManager.mu.RUnlock()
 
+func (omm *OfflineMessageManager) QueueMessageForOfflineClients(topic string, payload []byte, qos byte, retain bool, matcher TopicMatcher) error {
 	queuedCount := 0
 
-	for clientID, session := range omm.sessionManager.activeSessions {
+	omm.sessionManager.activeSessions.Range(func(key, value any) bool {
+		clientID := key.(string)
+		session := value.(*PersistentSession)
 		session.mu.RLock()
 
 		// Skip connected clients
 		if session.Connected {
 			session.mu.RUnlock()
-			continue
+			return true
 		}
 
 		// Skip clean sessions
 		if session.CleanSession {
 			session.mu.RUnlock()
-			continue
+			return true
 		}
 
 		// Check if client has matching subscription
@@ -157,7 +155,9 @@ func (omm *OfflineMessageManager) QueueMessageForOfflineClients(topic string, pa
 				queuedCount++
 			}
 		}
-	}
+
+		return true
+	})
 
 	if queuedCount > 0 {
 		log.Printf("[INFO] Queued message for %d offline clients: topic=%s", queuedCount, topic)
@@ -168,12 +168,11 @@ func (omm *OfflineMessageManager) QueueMessageForOfflineClients(topic string, pa
 
 // GetOfflineMessageStats returns statistics about offline messages
 func (omm *OfflineMessageManager) GetOfflineMessageStats() map[string]OfflineStats {
-	omm.sessionManager.mu.RLock()
-	defer omm.sessionManager.mu.RUnlock()
-
 	stats := make(map[string]OfflineStats)
 
-	for clientID, session := range omm.sessionManager.activeSessions {
+	omm.sessionManager.activeSessions.Range(func(key, value any) bool {
+		clientID := key.(string)
+		session := value.(*PersistentSession)
 		session.mu.RLock()
 
 		if !session.Connected && !session.CleanSession {
@@ -189,27 +188,28 @@ func (omm *OfflineMessageManager) GetOfflineMessageStats() map[string]OfflineSta
 			}
 
 			stats[clientID] = OfflineStats{
-				MessageCount:   len(session.MessageQueue),
-				TotalBytes:     totalBytes,
-				ExpiredCount:   expiredCount,
-				OldestMessage:  getOldestMessageTime(session.MessageQueue),
-				LastActivity:   session.LastActivity,
+				MessageCount:  len(session.MessageQueue),
+				TotalBytes:    totalBytes,
+				ExpiredCount:  expiredCount,
+				OldestMessage: getOldestMessageTime(session.MessageQueue),
+				LastActivity:  session.LastActivity,
 			}
 		}
 
 		session.mu.RUnlock()
-	}
+		return true
+	})
 
 	return stats
 }
 
 // OfflineStats contains statistics about offline messages for a client
 type OfflineStats struct {
-	MessageCount  int           `json:"message_count"`
-	TotalBytes    uint64        `json:"total_bytes"`
-	ExpiredCount  int           `json:"expired_count"`
-	OldestMessage *time.Time    `json:"oldest_message,omitempty"`
-	LastActivity  time.Time     `json:"last_activity"`
+	MessageCount  int        `json:"message_count"`
+	TotalBytes    uint64     `json:"total_bytes"`
+	ExpiredCount  int        `json:"expired_count"`
+	OldestMessage *time.Time `json:"oldest_message,omitempty"`
+	LastActivity  time.Time  `json:"last_activity"`
 }
 
 // TopicMatcher interface for topic matching logic

@@ -33,10 +33,10 @@ type Subscription struct {
 
 // SharedSubscription represents a subscription to a shared topic with group management.
 type SharedSubscription struct {
-	Group      string
-	Topic      string
-	Mailboxes  []*Subscription
-	NextIndex  int // For round-robin distribution
+	Group     string
+	Topic     string
+	Mailboxes []*Subscription
+	NextIndex int // For round-robin distribution
 }
 
 // Store provides a thread-safe, in-memory mapping of topic strings to lists of
@@ -71,9 +71,7 @@ func (s *Store) Subscribe(topic string, mailbox *actor.Mailbox, qos byte) {
 	if strings.HasPrefix(topic, "$share/") {
 		s.subscribeShared(topic, mailbox, qos)
 	} else {
-		// Regular subscription
-		sub := &Subscription{Mailbox: mailbox, QoS: qos}
-		s.subscriptions[topic] = append(s.subscriptions[topic], sub)
+		s.subscriptions[topic] = s.addOrUpdateSubscription(s.subscriptions[topic], mailbox, qos)
 	}
 }
 
@@ -104,9 +102,7 @@ func (s *Store) subscribeShared(shareTopic string, mailbox *actor.Mailbox, qos b
 		s.sharedSubscriptions[groupKey] = sharedSub
 	}
 
-	// Add subscriber to the group
-	sub := &Subscription{Mailbox: mailbox, QoS: qos}
-	sharedSub.Mailboxes = append(sharedSub.Mailboxes, sub)
+	sharedSub.Mailboxes = s.addOrUpdateSubscription(sharedSub.Mailboxes, mailbox, qos)
 }
 
 // Unsubscribe removes a subscriber's mailbox from a specific topic's
@@ -211,15 +207,18 @@ func (s *Store) GetSubscribers(topic string) []*Subscription {
 	sharedSubs := s.getSharedSubscribersForTopic(topic)
 	allSubs = append(allSubs, sharedSubs...)
 
-	// Return a copy to prevent race conditions
-	subsCopy := make([]*Subscription, len(allSubs))
-	copy(subsCopy, allSubs)
+	// Return a true copy to prevent race conditions
+	subsCopy := make([]*Subscription, 0, len(allSubs))
+	for _, sub := range allSubs {
+		subsCopy = append(subsCopy, sub)
+	}
 	return subsCopy
 }
 
 // getSharedSubscribersForTopic returns subscribers from shared subscriptions
 // using round-robin distribution for load balancing
 func (s *Store) getSharedSubscribersForTopic(topic string) []*Subscription {
+	// We assume caller already holds at least a read lock for sharedSubscriptions.
 	var selectedSubs []*Subscription
 
 	// Check all shared subscriptions to see if topic matches
@@ -237,67 +236,113 @@ func (s *Store) getSharedSubscribersForTopic(topic string) []*Subscription {
 	return selectedSubs
 }
 
-// matchesTopicFilter checks if a published topic matches a subscription topic filter.
-// Implements MQTT 3.1.1 specification for topic matching with wildcards:
-// - '+' matches exactly one level
-// - '#' matches zero or more levels and must be the last character
-//
-// Examples:
-// - "sensor/+/temperature" matches "sensor/room1/temperature" but not "sensor/room1/sub/temperature"
-// - "sensor/#" matches "sensor", "sensor/room1", "sensor/room1/temperature", etc.
-// - "sensor/room1/temperature" matches exactly "sensor/room1/temperature"
-//
-// Parameters:
-// - publishTopic: The topic name used when publishing a message
-// - filterTopic: The topic filter used in subscription (may contain wildcards)
-//
-// Returns true if the published topic matches the subscription filter.
-func matchesTopicFilter(publishTopic, filterTopic string) bool {
-	// Exact match (common case, optimize for it)
-	if publishTopic == filterTopic {
-		return true
+// addOrUpdateSubscription ensures a mailbox is only subscribed once for a given topic.
+// If the mailbox already exists, its QoS is updated; otherwise it is appended.
+func (s *Store) addOrUpdateSubscription(subs []*Subscription, mailbox *actor.Mailbox, qos byte) []*Subscription {
+	for _, existing := range subs {
+		if existing.Mailbox == mailbox {
+			existing.QoS = qos
+			return subs
+		}
 	}
 
-	// If no wildcards in filter, it's just a string comparison
-	if !strings.ContainsAny(filterTopic, "+#") {
-		return publishTopic == filterTopic
+	return append(subs, &Subscription{
+		Mailbox: mailbox,
+		QoS:     qos,
+	})
+}
+
+// RemoveAllSubscriptions removes every subscription entry associated with the given mailbox.
+// It returns the topic filters that were removed so callers can perform additional bookkeeping.
+func (s *Store) RemoveAllSubscriptions(mailbox *actor.Mailbox) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if mailbox == nil {
+		return nil
 	}
 
-	// Split topics into levels
-	pubLevels := strings.Split(publishTopic, "/")
-	filterLevels := strings.Split(filterTopic, "/")
+	var removedTopics []string
 
-	// Handle multi-level wildcard '#'
-	// Must be last level and matches everything from that point
-	if len(filterLevels) > 0 && filterLevels[len(filterLevels)-1] == "#" {
-		// Remove the '#' and check if remaining levels match
-		filterLevels = filterLevels[:len(filterLevels)-1]
+	// Handle regular subscriptions
+	for topic, subs := range s.subscriptions {
+		updated := make([]*Subscription, 0, len(subs))
+		removedFromTopic := false
 
-		// If published topic has fewer levels than filter (minus #), no match
-		if len(pubLevels) < len(filterLevels) {
-			return false
+		for _, sub := range subs {
+			if sub.Mailbox == mailbox {
+				removedFromTopic = true
+				continue
+			}
+			updated = append(updated, sub)
 		}
 
-		// Check all levels before the '#'
-		for i := 0; i < len(filterLevels); i++ {
-			if filterLevels[i] != "+" && filterLevels[i] != pubLevels[i] {
-				return false
+		if removedFromTopic {
+			removedTopics = append(removedTopics, topic)
+			if len(updated) > 0 {
+				s.subscriptions[topic] = updated
+			} else {
+				delete(s.subscriptions, topic)
 			}
 		}
-		return true
 	}
 
-	// For single-level wildcards '+', levels must match exactly in count
-	if len(pubLevels) != len(filterLevels) {
-		return false
+	// Handle shared subscriptions
+	for groupKey, sharedSub := range s.sharedSubscriptions {
+		updated := make([]*Subscription, 0, len(sharedSub.Mailboxes))
+		removedFromShared := false
+
+		for _, sub := range sharedSub.Mailboxes {
+			if sub.Mailbox == mailbox {
+				removedFromShared = true
+				continue
+			}
+			updated = append(updated, sub)
+		}
+
+		if removedFromShared {
+			if len(updated) > 0 {
+				sharedSub.Mailboxes = updated
+				if sharedSub.NextIndex >= len(updated) {
+					sharedSub.NextIndex = 0
+				}
+			} else {
+				delete(s.sharedSubscriptions, groupKey)
+			}
+		}
 	}
 
-	// Check each level
-	for i := 0; i < len(filterLevels); i++ {
-		if filterLevels[i] != "+" && filterLevels[i] != pubLevels[i] {
+	return removedTopics
+}
+
+// matchesTopicFilter checks if a published topic matches a subscription topic filter.
+// Implements MQTT 3.1.1 specification for topic matching with wildcards.
+func matchesTopicFilter(topic, filter string) bool {
+	topicSegments := strings.Split(topic, "/")
+	filterSegments := strings.Split(filter, "/")
+
+	topicLen := len(topicSegments)
+	filterLen := len(filterSegments)
+
+	for i := 0; i < filterLen; i++ {
+		if i >= topicLen {
+			// If filter has more segments but the last one is not '#', no match
+			return filterSegments[i] == "#" && i == filterLen-1
+		}
+
+		filterSegment := filterSegments[i]
+		topicSegment := topicSegments[i]
+
+		if filterSegment == "#" {
+			// '#' must be the last segment in the filter
+			return i == filterLen-1
+		}
+
+		if filterSegment != "+" && filterSegment != topicSegment {
 			return false
 		}
 	}
 
-	return true
+	// If we finished iterating through the filter, the topic must have the same number of segments
+	return topicLen == filterLen
 }

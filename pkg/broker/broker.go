@@ -52,6 +52,8 @@ import (
 	"github.com/turtacn/emqx-go/pkg/topic"
 )
 
+const qosDuplicateWindow = 30 * time.Second
+
 // Broker is the central component of the MQTT server. It acts as the main
 // supervisor for client sessions and handles the core logic of message routing,
 // session management, cluster communication, authentication, retained messages,
@@ -78,6 +80,9 @@ type Broker struct {
 	// Connector management
 	connectorManager *connector.ConnectorManager
 
+	// Track processed QoS 1 packet IDs per client to suppress duplicates
+	processedQoS1 map[string]map[uint16]time.Time
+
 	// Rule engine
 	ruleEngine *rules.RuleEngine
 
@@ -90,14 +95,14 @@ type Broker struct {
 	// Republish callback for rule engine
 	republishCallback func(topic string, qos int, payload []byte) error
 
-	mu        sync.RWMutex
+	mu sync.RWMutex
 }
 
 // ClientTopicAliasManager manages topic aliases for a single client session
 type ClientTopicAliasManager struct {
-	mu                      sync.RWMutex
-	clientToServerAliases   map[uint16]string // alias -> topic mapping for inbound messages
-	topicAliasMaximum       uint16            // maximum topic alias value supported by server
+	mu                    sync.RWMutex
+	clientToServerAliases map[uint16]string // alias -> topic mapping for inbound messages
+	topicAliasMaximum     uint16            // maximum topic alias value supported by server
 }
 
 // newClientTopicAliasManager creates a new topic alias manager for a client
@@ -176,6 +181,7 @@ func New(nodeID string, clusterMgr *cluster.Manager) *Broker {
 		cluster:              clusterMgr,
 		nodeID:               nodeID,
 		authChain:            auth.NewAuthChain(),
+		processedQoS1:        make(map[string]map[uint16]time.Time),
 		retainer:             ret,
 		certManager:          tlspkg.NewCertificateManager(),
 		persistentSessionMgr: sessionMgr,
@@ -758,24 +764,41 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 	defer cancel()
 
 	var receivedDisconnectPacket bool // Track if we received a proper DISCONNECT packet
+	var keepAlive time.Duration
 	for {
+		// Set read deadline based on keep-alive
+		if keepAlive > 0 {
+			conn.SetReadDeadline(time.Now().Add(keepAlive))
+		} else {
+			// If keep-alive is 0, disable deadline
+			conn.SetReadDeadline(time.Time{})
+		}
+
 		log.Printf("[DEBUG] About to read packet from %s (clientID: %s)", conn.RemoteAddr(), clientID)
 		pk, err := readPacket(reader)
 		if err != nil {
 			log.Printf("[DEBUG] Error reading packet from %s (clientID: %s): %v", conn.RemoteAddr(), clientID, err)
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				log.Printf("[INFO] Client %s timed out due to keep-alive. Closing connection.", clientID)
+				// Send DISCONNECT packet for timeout
+				resp := packets.Packet{
+					FixedHeader: packets.FixedHeader{Type: packets.Disconnect},
+					ReasonCode:  0x8E, // Keep Alive Timeout
+				}
+				writePacket(conn, &resp)
+				return
+			}
 			if err != io.EOF {
 				// Enhanced error handling for protocol violations
-				if strings.Contains(err.Error(), "qos out of range") {
-					log.Printf("Protocol violation from %s (client: %s): Invalid QoS value received. MQTT spec allows QoS 0, 1, or 2 only. Error: %v",
+				if strings.Contains(err.Error(), "protocol violation") {
+					log.Printf("Protocol violation from %s (client: %s): %v. Sending DISCONNECT.",
 						conn.RemoteAddr(), clientID, err)
-					// Send CONNACK with error if we haven't sent one yet
-					if clientID == "" {
-						resp := packets.Packet{
-							FixedHeader: packets.FixedHeader{Type: packets.Connack},
-							ReasonCode:  0x80, // Protocol Error (0x80)
-						}
-						writePacket(conn, &resp)
+					// Send DISCONNECT packet for protocol violation
+					resp := packets.Packet{
+						FixedHeader: packets.FixedHeader{Type: packets.Disconnect},
+						ReasonCode:  0x82, // Protocol Error
 					}
+					writePacket(conn, &resp)
 				} else {
 					log.Printf("Error reading packet from %s (client: %s): %v", conn.RemoteAddr(), clientID, err)
 				}
@@ -820,17 +843,17 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			clientID = pk.Connect.ClientIdentifier
-			cleanSession := pk.Connect.Clean
-			keepAlive := time.Duration(pk.Connect.Keepalive) * time.Second
+			connectClientID := pk.Connect.ClientIdentifier
+			connectCleanSession := pk.Connect.Clean
+			connectKeepAlive := time.Duration(pk.Connect.Keepalive) * time.Second
 
-			log.Printf("[DEBUG] CONNECT packet received from %s - ClientID: '%s'", conn.RemoteAddr(), clientID)
-			log.Printf("[DEBUG] CONNECT details - CleanSession: %t, KeepAlive: %d", cleanSession, pk.Connect.Keepalive)
+			log.Printf("[DEBUG] CONNECT packet received from %s - ClientID: '%s'", conn.RemoteAddr(), connectClientID)
+			log.Printf("[DEBUG] CONNECT details - CleanSession: %t, KeepAlive: %d", connectCleanSession, pk.Connect.Keepalive)
 
 			// MQTT Protocol compliance: Check client ID validity
-			if clientID == "" {
+			if connectClientID == "" {
 				// According to MQTT 3.1.1, if clientID is empty and cleanSession is false, reject connection
-				if !cleanSession {
+				if !connectCleanSession {
 					log.Printf("[ERROR] CONNECT from %s has empty client ID with cleanSession=false. Protocol violation.", conn.RemoteAddr())
 					resp := packets.Packet{
 						FixedHeader: packets.FixedHeader{Type: packets.Connack},
@@ -840,8 +863,8 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 					return
 				}
 				// Generate a unique client ID for clean session clients
-				clientID = generateClientID()
-				log.Printf("[INFO] Generated client ID '%s' for empty clientID with cleanSession=true", clientID)
+				connectClientID = generateClientID()
+				log.Printf("[INFO] Generated client ID '%s' for empty clientID with cleanSession=true", connectClientID)
 			}
 
 			// Extract username and password from CONNECT packet
@@ -888,9 +911,9 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 			// Check blacklist before authentication
 			clientIP := strings.Split(conn.RemoteAddr().String(), ":")[0]
-			allowed, reason, err := b.blacklistMiddleware.CheckClientConnection(clientID, username, clientIP, "mqtt")
+			allowed, reason, err := b.blacklistMiddleware.CheckClientConnection(connectClientID, username, clientIP, "mqtt")
 			if err != nil {
-				log.Printf("[ERROR] Blacklist check error for client %s: %v", clientID, err)
+				log.Printf("[ERROR] Blacklist check error for client %s: %v", connectClientID, err)
 				resp := packets.Packet{
 					FixedHeader: packets.FixedHeader{Type: packets.Connack},
 					ReasonCode:  0x80, // Unspecified error
@@ -899,7 +922,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				return
 			}
 			if !allowed {
-				log.Printf("[WARN] Client %s blocked by blacklist: %s", clientID, reason)
+				log.Printf("[WARN] Client %s blocked by blacklist: %s", connectClientID, reason)
 				// Close connection immediately without sending CONNACK for blacklisted clients
 				// This ensures the client recognizes the connection as failed at TCP level
 				conn.Close()
@@ -911,35 +934,35 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 			// SECURITY TESTING BYPASS: Allow specific test clients to bypass authentication for security testing
 			// Note: This is more restrictive to avoid interfering with authentication tests
-			if strings.HasPrefix(clientID, "fuzz") || strings.HasPrefix(clientID, "mbfuzzer") ||
-			   strings.HasPrefix(clientID, "defensics") || strings.HasPrefix(clientID, "pubfuzz") ||
-			   strings.HasPrefix(clientID, "subfuzz") || strings.HasPrefix(clientID, "qosfuzz") ||
-			   strings.HasPrefix(clientID, "topicfuzz") || strings.HasPrefix(clientID, "pktfuzz") ||
-			   strings.HasPrefix(clientID, "race-client") || strings.HasPrefix(clientID, "flood-client") ||
-			   strings.HasPrefix(clientID, "qos-test") || strings.HasPrefix(clientID, "packetid-test") {
+			if strings.HasPrefix(connectClientID, "fuzz") || strings.HasPrefix(connectClientID, "mbfuzzer") ||
+				strings.HasPrefix(connectClientID, "defensics") || strings.HasPrefix(connectClientID, "pubfuzz") ||
+				strings.HasPrefix(connectClientID, "subfuzz") || strings.HasPrefix(connectClientID, "qosfuzz") ||
+				strings.HasPrefix(connectClientID, "topicfuzz") || strings.HasPrefix(connectClientID, "pktfuzz") ||
+				strings.HasPrefix(connectClientID, "race-client") || strings.HasPrefix(connectClientID, "flood-client") ||
+				strings.HasPrefix(connectClientID, "qos-test") || strings.HasPrefix(connectClientID, "packetid-test") {
 				authResult = auth.AuthIgnore
-				log.Printf("[DEBUG] Bypassing authentication for security test client: %s", clientID)
+				log.Printf("[DEBUG] Bypassing authentication for security test client: %s", connectClientID)
 			} else {
 				authResult = b.authChain.Authenticate(username, password)
 			}
 
-			log.Printf("[DEBUG] Authentication result for client %s (user: %s): %s", clientID, username, authResult.String())
+			log.Printf("[DEBUG] Authentication result for client %s (user: %s): %s", connectClientID, username, authResult.String())
 
 			var connackCode byte
 			switch authResult {
 			case auth.AuthSuccess:
 				connackCode = packets.CodeSuccess.Code
-				log.Printf("[INFO] Authentication successful for client %s (user: %s)", clientID, username)
+				log.Printf("[INFO] Authentication successful for client %s (user: %s)", connectClientID, username)
 			case auth.AuthFailure:
 				connackCode = 0x84 // Bad username or password
-				log.Printf("[WARN] Authentication failed for client %s (user: %s)", clientID, username)
+				log.Printf("[WARN] Authentication failed for client %s (user: %s)", connectClientID, username)
 			case auth.AuthError:
 				connackCode = 0x80 // Unspecified error
-				log.Printf("[ERROR] Authentication error for client %s (user: %s)", clientID, username)
+				log.Printf("[ERROR] Authentication error for client %s (user: %s)", connectClientID, username)
 			case auth.AuthIgnore:
 				// If authentication is ignored (no authenticators or all skip), allow connection
 				connackCode = packets.CodeSuccess.Code
-				log.Printf("[INFO] Authentication ignored for client %s (user: %s), allowing connection", clientID, username)
+				log.Printf("[INFO] Authentication ignored for client %s (user: %s), allowing connection", connectClientID, username)
 			}
 
 			// Send CONNACK response
@@ -958,42 +981,42 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				if pk.Properties.RequestResponseInfo == 1 {
 					// Provide response information for request-response pattern
 					resp.Properties.ResponseInfo = fmt.Sprintf("response-info://%s/response/", b.nodeID)
-					log.Printf("[DEBUG] Set response info for client %s: %s", clientID, resp.Properties.ResponseInfo)
+					log.Printf("[DEBUG] Set response info for client %s: %s", connectClientID, resp.Properties.ResponseInfo)
 				}
 
 				resp.ProtocolVersion = 5
 			}
 
-			log.Printf("[DEBUG] Sending CONNACK to client %s with reason code: 0x%02x", clientID, connackCode)
+			log.Printf("[DEBUG] Sending CONNACK to client %s with reason code: 0x%02x", connectClientID, connackCode)
 			err = writePacket(conn, &resp)
 			if err != nil {
-				log.Printf("[ERROR] Failed to send CONNACK to client %s: %v", clientID, err)
+				log.Printf("[ERROR] Failed to send CONNACK to client %s: %v", connectClientID, err)
 				return
 			}
 
 			// If authentication failed, close the connection
 			if connackCode != packets.CodeSuccess.Code {
-				log.Printf("[INFO] Closing connection for client %s due to authentication failure", clientID)
+				log.Printf("[INFO] Closing connection for client %s due to authentication failure", connectClientID)
 				return
 			}
 
 			// Handle persistent session creation/resumption
 			var sessionExpiry time.Duration
-			if keepAlive > 0 {
-				sessionExpiry = keepAlive * 2 // Default to 2x keepalive
+			if connectKeepAlive > 0 {
+				sessionExpiry = connectKeepAlive * 2 // Default to 2x keepalive
 			} else {
 				sessionExpiry = 24 * time.Hour // Default to 24 hours
 			}
 
 			// Create or resume persistent session
-			persistentSession, err := b.persistentSessionMgr.CreateOrResumeSession(clientID, cleanSession, sessionExpiry)
+			persistentSession, err := b.persistentSessionMgr.CreateOrResumeSession(connectClientID, connectCleanSession, sessionExpiry)
 			if err != nil {
-				log.Printf("[ERROR] Failed to create/resume persistent session for %s: %v", clientID, err)
+				log.Printf("[ERROR] Failed to create/resume persistent session for %s: %v", connectClientID, err)
 				return
 			}
 
 			// Check if we should deliver offline messages (before setting callbacks)
-			shouldDeliverOffline := !cleanSession && len(persistentSession.MessageQueue) > 0
+			shouldDeliverOffline := !connectCleanSession && len(persistentSession.MessageQueue) > 0
 
 			// Handle will message if present
 			if pk.Connect.WillFlag {
@@ -1005,35 +1028,35 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				// Note: Will message validation has been relaxed to accept normal MQTT topics
 				// Only basic MQTT protocol compliance checks are performed
 				if len(willTopic) > 0 && willQoS <= 2 {
-					err = b.persistentSessionMgr.SetWillMessage(clientID, willTopic, willPayload, willQoS, willRetain, 0)
+					err = b.persistentSessionMgr.SetWillMessage(connectClientID, willTopic, willPayload, willQoS, willRetain, 0)
 					if err != nil {
-						log.Printf("[ERROR] Failed to set will message for %s: %v", clientID, err)
+						log.Printf("[ERROR] Failed to set will message for %s: %v", connectClientID, err)
 					} else {
-						log.Printf("[INFO] Set will message for client %s: topic=%s", clientID, willTopic)
+						log.Printf("[INFO] Set will message for client %s: topic=%s", connectClientID, willTopic)
 					}
 				}
 			}
 
 			// Register session for actor management
-			log.Printf("[DEBUG] Registering session for client %s", clientID)
-			sessionMailbox = b.registerSession(connCtx, clientID, conn, 4, persistentSession) // Default to MQTT 3.1.1
-			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", clientID, sessionMailbox)
+			log.Printf("[DEBUG] Registering session for client %s", connectClientID)
+			sessionMailbox = b.registerSession(connCtx, connectClientID, conn, 4, persistentSession) // Default to MQTT 3.1.1
+			log.Printf("[DEBUG] Session registered successfully for client %s, mailbox: %p", connectClientID, sessionMailbox)
 
 			// Create topic alias manager for this client (MQTT 5.0)
 			b.mu.Lock()
-			b.topicAliasManagers[clientID] = newClientTopicAliasManager(100) // Allow up to 100 aliases
+			b.topicAliasManagers[connectClientID] = newClientTopicAliasManager(100) // Allow up to 100 aliases
 			b.mu.Unlock()
-			log.Printf("[DEBUG] Topic alias manager created for client %s", clientID)
+			log.Printf("[DEBUG] Topic alias manager created for client %s", connectClientID)
 
 			// Set delivery callback for this specific client
-			b.offlineMessageMgr.SetDeliveryCallback(clientID, b.deliverOfflineMessage)
+			b.offlineMessageMgr.SetDeliveryCallback(connectClientID, b.deliverOfflineMessage)
 
 			// If this is a persistent session resumption, restore subscriptions to topic store
-			if !cleanSession && len(persistentSession.Subscriptions) > 0 {
-				log.Printf("[DEBUG] Restoring %d subscriptions for persistent session %s", len(persistentSession.Subscriptions), clientID)
+			if !connectCleanSession && len(persistentSession.Subscriptions) > 0 {
+				log.Printf("[DEBUG] Restoring %d subscriptions for persistent session %s", len(persistentSession.Subscriptions), connectClientID)
 				for topic, qos := range persistentSession.Subscriptions {
 					b.topics.Subscribe(topic, sessionMailbox, qos)
-					log.Printf("[DEBUG] Restored subscription: Client=%s, Topic=%s, QoS=%d", clientID, topic, qos)
+					log.Printf("[DEBUG] Restored subscription: Client=%s, Topic=%s, QoS=%d", connectClientID, topic, qos)
 				}
 			}
 
@@ -1041,14 +1064,16 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 			if shouldDeliverOffline {
 				go func() {
 					time.Sleep(100 * time.Millisecond) // Brief delay to ensure session is fully established
-					if err := b.offlineMessageMgr.DeliverOfflineMessages(clientID); err != nil {
-						log.Printf("[ERROR] Failed to deliver offline messages to %s: %v", clientID, err)
+					if err := b.offlineMessageMgr.DeliverOfflineMessages(connectClientID); err != nil {
+						log.Printf("[ERROR] Failed to deliver offline messages to %s: %v", connectClientID, err)
 					}
 				}()
 			}
 
-			log.Printf("[INFO] Client %s connected successfully with user: %s (cleanSession: %t)", clientID, username, cleanSession)
-
+			log.Printf("[INFO] Client %s connected successfully with user: %s (cleanSession: %t)", connectClientID, username, connectCleanSession)
+			// Update the loop-scoped clientID and keepAlive after successful connection
+			clientID = connectClientID
+			keepAlive = connectKeepAlive
 		case packets.Subscribe:
 			log.Printf("[DEBUG] SUBSCRIBE packet received from client %s (remote: %s)", clientID, conn.RemoteAddr())
 			log.Printf("[DEBUG] SUBSCRIBE packet details - PacketID: %d, Filter count: %d", pk.PacketID, len(pk.Filters))
@@ -1065,7 +1090,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				// Send SUBACK with failure
 				resp := packets.Packet{
 					FixedHeader: packets.FixedHeader{Type: packets.Suback},
-					PacketID:    1, // Use dummy packet ID since original is invalid
+					PacketID:    1,            // Use dummy packet ID since original is invalid
 					ReasonCodes: []byte{0x80}, // Unspecified error
 				}
 				writePacket(conn, &resp)
@@ -1277,7 +1302,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				}
 				resp := packets.Packet{
 					FixedHeader: packets.FixedHeader{Type: respType},
-					PacketID:    1, // Use dummy packet ID since original is invalid
+					PacketID:    1,    // Use dummy packet ID since original is invalid
 					ReasonCode:  0x82, // Protocol Error
 				}
 				writePacket(conn, &resp)
@@ -1358,6 +1383,14 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 
 			// Use validated QoS level
 			publishQoS := pk.FixedHeader.Qos
+
+			skipProcessing := false
+			if publishQoS == 1 {
+				if isDuplicate := b.markAndCheckDuplicate(clientID, pk.PacketID); isDuplicate {
+					log.Printf("[DEBUG] Detected duplicate QoS1 publish from client %s with PacketID %d, suppressing reprocessing.", clientID, pk.PacketID)
+					skipProcessing = true
+				}
+			}
 
 			// Handle MQTT 5.0 topic aliases
 			var resolvedTopic string
@@ -1445,53 +1478,40 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				return
 			}
 
-			// Handle retained messages
-			if pk.FixedHeader.Retain {
-				log.Printf("[DEBUG] PUBLISH with RETAIN flag from client %s to topic %s", clientID, resolvedTopic)
-				ctx := context.Background()
-				if err := b.retainer.StoreRetained(ctx, resolvedTopic, pk.Payload, publishQoS, clientID); err != nil {
-					log.Printf("[ERROR] Failed to store retained message: %v", err)
-				} else {
-					log.Printf("[INFO] Stored retained message for topic %s (payload size: %d)", resolvedTopic, len(pk.Payload))
-				}
-			}
-
-			// Route the published message to subscribers with request-response properties
-			b.routePublishWithRequestResponse(resolvedTopic, pk.Payload, publishQoS, userProperties, responseTopic, correlationData)
-
-			// Route to connectors for external systems
-			go b.routeToConnectors(resolvedTopic, pk.Payload, publishQoS, userProperties, responseTopic, correlationData)
-
-			// Queue message for offline subscribers
-			matcher := &persistent.BasicTopicMatcher{}
-			if err := b.offlineMessageMgr.QueueMessageForOfflineClients(resolvedTopic, pk.Payload, publishQoS, pk.FixedHeader.Retain, matcher); err != nil {
-				log.Printf("[ERROR] Failed to queue message for offline clients: %v", err)
-			}
-
-			// Send acknowledgment back to publisher based on QoS level
-			log.Printf("[DEBUG] About to send acknowledgment for QoS %d, PacketID %d to client %s", publishQoS, pk.PacketID, clientID)
+			// Send acknowledgment back to publisher as early as possible for QoS 1/2
 			if publishQoS == 1 {
-				// QoS 1: Send PUBACK to publisher
-				log.Printf("[DEBUG] Preparing PUBACK for PacketID %d to client %s", pk.PacketID, clientID)
+				log.Printf("[DEBUG] About to send acknowledgment for QoS %d, PacketID %d to client %s", publishQoS, pk.PacketID, clientID)
 				resp := packets.Packet{
 					FixedHeader: packets.FixedHeader{Type: packets.Puback},
 					PacketID:    pk.PacketID,
 				}
-				err = writePacket(conn, &resp)
-				if err != nil {
+				if err := writePacket(conn, &resp); err != nil {
 					log.Printf("[ERROR] Failed to write PUBACK for PacketID %d to client %s: %v", pk.PacketID, clientID, err)
-				} else {
-					log.Printf("[DEBUG] PUBACK sent successfully for PacketID %d to client %s", pk.PacketID, clientID)
+					return
 				}
+				log.Printf("[DEBUG] PUBACK sent successfully for PacketID %d to client %s", pk.PacketID, clientID)
 			} else if publishQoS == 2 {
-				// QoS 2: Send PUBREC to publisher (start QoS 2 handshake)
+				log.Printf("[DEBUG] About to send acknowledgment for QoS %d, PacketID %d to client %s", publishQoS, pk.PacketID, clientID)
 				resp := packets.Packet{
 					FixedHeader: packets.FixedHeader{Type: packets.Pubrec},
 					PacketID:    pk.PacketID,
 				}
-				err = writePacket(conn, &resp)
+				if err := writePacket(conn, &resp); err != nil {
+					log.Printf("[ERROR] Failed to write PUBREC for PacketID %d to client %s: %v", pk.PacketID, clientID, err)
+					return
+				}
+				log.Printf("[DEBUG] PUBREC sent successfully for PacketID %d to client %s", pk.PacketID, clientID)
 			}
-			// QoS 0: No acknowledgment needed
+
+			// Dispatch remaining publish processing asynchronously so we can continue reading packets quickly.
+			payloadCopy := append([]byte(nil), pk.Payload...)
+			userPropsCopy := copyUserProperties(userProperties)
+			correlationCopy := append([]byte(nil), correlationData...)
+			retainFlag := pk.FixedHeader.Retain
+
+			if !skipProcessing {
+				go b.processPublishPostAck(clientID, resolvedTopic, payloadCopy, publishQoS, retainFlag, userPropsCopy, responseTopic, correlationCopy)
+			}
 
 		case packets.Puback:
 			// CRITICAL SECURITY FIX: Ensure PUBACK only comes after CONNECT
@@ -1603,7 +1623,7 @@ func (b *Broker) handleConnection(ctx context.Context, conn net.Conn) {
 				// Send UNSUBACK with failure
 				resp := packets.Packet{
 					FixedHeader: packets.FixedHeader{Type: packets.Unsuback},
-					PacketID:    1, // Use dummy packet ID since original is invalid
+					PacketID:    1,            // Use dummy packet ID since original is invalid
 					ReasonCodes: []byte{0x80}, // Unspecified error
 				}
 				writePacket(conn, &resp)
@@ -1761,13 +1781,16 @@ func (b *Broker) registerSession(ctx context.Context, clientID string, conn net.
 		// 4. Subscriptions will be restored later using persistent session data
 
 		oldMailbox, ok := oldMb.(*actor.Mailbox)
-		if ok && persistentSession != nil {
-			// Remove all old subscriptions from topic store
-			for topic := range persistentSession.Subscriptions {
-				b.topics.Unsubscribe(topic, oldMailbox)
-				log.Printf("[DEBUG] Removed old subscription for client %s from topic %s", clientID, topic)
+		if ok {
+			// Send a stop message to the old actor for graceful shutdown
+			oldMailbox.Send(session.Stop{})
+			log.Printf("[DEBUG] Sent stop message to old session for client %s", clientID)
+
+			// Remove any stale subscriptions that still reference the old mailbox
+			removed := b.topics.RemoveAllSubscriptions(oldMailbox)
+			if len(removed) > 0 {
+				log.Printf("[DEBUG] Removed %d stale subscriptions for client %s during session takeover", len(removed), clientID)
 			}
-			log.Printf("[DEBUG] Cleared %d old subscriptions for client %s", len(persistentSession.Subscriptions), clientID)
 		}
 
 		// Remove old session from storage so we can register the new one
@@ -1795,8 +1818,96 @@ func (b *Broker) registerSession(ctx context.Context, clientID string, conn net.
 }
 
 func (b *Broker) unregisterSession(clientID string) {
-	// In a full implementation, we would also need to unsubscribe from all topics.
+	if mb, err := b.sessions.Get(clientID); err == nil {
+		if mailbox, ok := mb.(*actor.Mailbox); ok {
+			removed := b.topics.RemoveAllSubscriptions(mailbox)
+			if len(removed) > 0 {
+				log.Printf("[DEBUG] Removed %d subscriptions for client %s during session cleanup", len(removed), clientID)
+			}
+		}
+	}
 	b.sessions.Delete(clientID)
+
+	b.mu.Lock()
+	delete(b.processedQoS1, clientID)
+	b.mu.Unlock()
+}
+
+func (b *Broker) markAndCheckDuplicate(clientID string, packetID uint16) bool {
+	if packetID == 0 {
+		return false
+	}
+
+	now := time.Now()
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	clientMap, ok := b.processedQoS1[clientID]
+	if !ok {
+		clientMap = make(map[uint16]time.Time)
+		b.processedQoS1[clientID] = clientMap
+	}
+
+	if ts, exists := clientMap[packetID]; exists {
+		if now.Sub(ts) < qosDuplicateWindow {
+			clientMap[packetID] = now
+			return true
+		}
+	}
+
+	clientMap[packetID] = now
+
+	// Cleanup old entries opportunistically to keep memory bounded
+	for id, ts := range clientMap {
+		if now.Sub(ts) >= qosDuplicateWindow {
+			delete(clientMap, id)
+		}
+	}
+
+	return false
+}
+
+// processPublishPostAck performs publish processing that can happen after acknowledgments are sent.
+func (b *Broker) processPublishPostAck(clientID, resolvedTopic string, payload []byte, publishQoS byte, retain bool, userProperties map[string][]byte, responseTopic string, correlationData []byte) {
+	if retain {
+		log.Printf("[DEBUG] PUBLISH with RETAIN flag from client %s to topic %s", clientID, resolvedTopic)
+		ctx := context.Background()
+		if err := b.retainer.StoreRetained(ctx, resolvedTopic, payload, publishQoS, clientID); err != nil {
+			log.Printf("[ERROR] Failed to store retained message: %v", err)
+		} else {
+			log.Printf("[INFO] Stored retained message for topic %s (payload size: %d)", resolvedTopic, len(payload))
+		}
+	}
+
+	// Route the published message to subscribers with request-response properties
+	b.routePublishWithRequestResponse(resolvedTopic, payload, publishQoS, userProperties, responseTopic, correlationData)
+
+	// Route to connectors for external systems
+	go b.routeToConnectors(resolvedTopic, payload, publishQoS, userProperties, responseTopic, correlationData)
+
+	// Queue message for offline subscribers
+	matcher := &persistent.BasicTopicMatcher{}
+	if err := b.offlineMessageMgr.QueueMessageForOfflineClients(resolvedTopic, payload, publishQoS, retain, matcher); err != nil {
+		log.Printf("[ERROR] Failed to queue message for offline clients: %v", err)
+	}
+}
+
+func copyUserProperties(props map[string][]byte) map[string][]byte {
+	if len(props) == 0 {
+		return nil
+	}
+	cloned := make(map[string][]byte, len(props))
+	for k, v := range props {
+		if v == nil {
+			cloned[k] = nil
+			continue
+		}
+		cp := make([]byte, len(v))
+		copy(cp, v)
+		cloned[k] = cp
+	}
+	return cloned
 }
 
 // routePublishWithUserProperties sends a message with user properties to all local and remote subscribers of a topic.
@@ -1920,22 +2031,30 @@ func (b *Broker) RouteToLocalSubscribersWithRequestResponse(topicName string, pa
 		}
 		log.Printf("%s", logMsg)
 	}
+	log.Printf("[DEBUG] Matched %d subscribers for topic '%s'", len(subscribers), topicName)
+	uniqueSubs := make(map[*actor.Mailbox]byte, len(subscribers))
 	for _, sub := range subscribers {
-		// Apply QoS downgrade rule: effective QoS = min(publish QoS, subscription QoS)
 		effectiveQoS := publishQoS
 		if sub.QoS < publishQoS {
 			effectiveQoS = sub.QoS
 		}
+		if current, exists := uniqueSubs[sub.Mailbox]; !exists || effectiveQoS > current {
+			uniqueSubs[sub.Mailbox] = effectiveQoS
+		}
+	}
+
+	for mailbox, qos := range uniqueSubs {
+		log.Printf("[DEBUG] Delivering to mailbox %p for topic '%s' with QoS %d", mailbox, topicName, qos)
 
 		msg := session.Publish{
 			Topic:           topicName,
 			Payload:         payload,
-			QoS:             effectiveQoS,
+			QoS:             qos,
 			UserProperties:  userProperties,
 			ResponseTopic:   responseTopic,
 			CorrelationData: correlationData,
 		}
-		sub.Mailbox.Send(msg)
+		mailbox.Send(msg)
 	}
 }
 
@@ -1996,49 +2115,11 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 	if err != nil {
 		// Check if this is a QoS out of range error
 		if strings.Contains(err.Error(), "qos out of range") {
-			log.Printf("[WARN] QoS out of range detected, attempting graceful handling: %v", err)
-			// Extract packet type from the first byte
-			packetType := (b >> 4) & 0x0F
-			// Map the packet type number to the correct packets type
-			switch packetType {
-			case 1:
-				fh.Type = packets.Connect
-			case 2:
-				fh.Type = packets.Connack
-			case 3:
-				fh.Type = packets.Publish
-			case 4:
-				fh.Type = packets.Puback
-			case 5:
-				fh.Type = packets.Pubrec
-			case 6:
-				fh.Type = packets.Pubrel
-			case 7:
-				fh.Type = packets.Pubcomp
-			case 8:
-				fh.Type = packets.Subscribe
-			case 9:
-				fh.Type = packets.Suback
-			case 10:
-				fh.Type = packets.Unsubscribe
-			case 11:
-				fh.Type = packets.Unsuback
-			case 12:
-				fh.Type = packets.Pingreq
-			case 13:
-				fh.Type = packets.Pingresp
-			case 14:
-				fh.Type = packets.Disconnect
-			default:
-				log.Printf("[ERROR] Unknown packet type: %d", packetType)
-				return nil, fmt.Errorf("unknown packet type: %d", packetType)
-			}
-			// Force QoS to 0 for safety
-			fh.Qos = 0
-			log.Printf("[DEBUG] Packet type: %d (%d), forced QoS to 0", packetType, int(fh.Type))
-		} else {
-			return nil, err
+			log.Printf("[WARN] QoS out of range detected, creating protocol violation error: %v", err)
+			// Return a specific error to be handled by the connection handler
+			return nil, fmt.Errorf("protocol violation: invalid QoS level in packet")
 		}
+		return nil, err
 	}
 
 	rem, _, err := packets.DecodeLength(r)
@@ -2096,8 +2177,15 @@ func readPacket(r *bufio.Reader) (*packets.Packet, error) {
 
 // writePacket encodes and writes a packet to a connection.
 func writePacket(w io.Writer, pk *packets.Packet) error {
+	// Add mutex to prevent race conditions
+	lock, err := getConnLock(w)
+	if err != nil {
+		return err
+	}
+	lock.Lock()
+	defer lock.Unlock()
+
 	var buf bytes.Buffer
-	var err error
 	switch pk.FixedHeader.Type {
 	case packets.Connack:
 		err = pk.ConnackEncode(&buf)
@@ -2126,6 +2214,24 @@ func writePacket(w io.Writer, pk *packets.Packet) error {
 	}
 	_, err = w.Write(buf.Bytes())
 	return err
+}
+
+var connLocks = make(map[net.Conn]*sync.Mutex)
+var connLocksMutex = &sync.Mutex{}
+
+func getConnLock(w io.Writer) (*sync.Mutex, error) {
+	conn, ok := w.(net.Conn)
+	if !ok {
+		return nil, fmt.Errorf("writer is not a net.Conn")
+	}
+	connLocksMutex.Lock()
+	defer connLocksMutex.Unlock()
+	lock, ok := connLocks[conn]
+	if !ok {
+		lock = &sync.Mutex{}
+		connLocks[conn] = lock
+	}
+	return lock, nil
 }
 
 // sendRetainedMessages sends retained messages to a newly subscribed client
@@ -2321,17 +2427,17 @@ func (b *Broker) GetConnections() []admin.ConnectionInfo {
 
 	// Add mock connection data
 	connections = append(connections, admin.ConnectionInfo{
-		ClientID:       "test-client-1",
-		Username:       "test",
-		PeerHost:       "127.0.0.1",
-		SockPort:       1883,
-		Protocol:       "MQTT",
-		ConnectedAt:    time.Now().Add(-time.Hour),
-		KeepAlive:      60,
-		CleanStart:     true,
-		ProtoVer:       4,
+		ClientID:           "test-client-1",
+		Username:           "test",
+		PeerHost:           "127.0.0.1",
+		SockPort:           1883,
+		Protocol:           "MQTT",
+		ConnectedAt:        time.Now().Add(-time.Hour),
+		KeepAlive:          60,
+		CleanStart:         true,
+		ProtoVer:           4,
 		SubscriptionsCount: 1,
-		Node:           b.nodeID,
+		Node:               b.nodeID,
 	})
 
 	return connections
@@ -2344,13 +2450,13 @@ func (b *Broker) GetSessions() []admin.SessionInfo {
 
 	// Add mock session data
 	sessions = append(sessions, admin.SessionInfo{
-		ClientID:       "test-client-1",
-		Username:       "test",
-		CreatedAt:      time.Now().Add(-time.Hour),
-		ConnectedAt:    &[]time.Time{time.Now().Add(-time.Hour)}[0],
-		ExpiryInterval: 3600,
+		ClientID:           "test-client-1",
+		Username:           "test",
+		CreatedAt:          time.Now().Add(-time.Hour),
+		ConnectedAt:        &[]time.Time{time.Now().Add(-time.Hour)}[0],
+		ExpiryInterval:     3600,
 		SubscriptionsCount: 1,
-		Node:           b.nodeID,
+		Node:               b.nodeID,
 	})
 
 	return sessions
